@@ -1,0 +1,59 @@
+# Toolchain comes from the Nix dev shell (flake.nix, loaded by direnv via .envrc).
+# mise only holds project env vars and task shortcuts.
+
+[env]
+CMAKE_GENERATOR = "Ninja"
+CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+
+[tasks.configure]
+description = "Configure a debug build with tests and examples in ./build"
+run = "cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DSDL_TESTS=ON -DSDL_EXAMPLES=ON"
+
+[tasks.build]
+description = "Build SDL, tests and examples"
+depends = ["configure"]
+run = "cmake --build build"
+
+[tasks.test]
+description = "Run the non-interactive CTest suite (extra args go to ctest)"
+depends = ["build"]
+run = "ctest --test-dir build -j4 --output-on-failure"
+
+[tasks."test:auto"]
+description = "Run testautomation: mise run test:auto -- --filter <suite|test>"
+depends = ["build"]
+dir = "build/test"
+run = "./testautomation"
+
+[tasks.dynapi]
+description = "Regenerate the dynamic API tables after changing public functions"
+run = "python3 src/dynapi/gendynapi.py"
+
+[tasks.format]
+description = "Format changed C sources with clang-format"
+run = "build-scripts/clang-format-src.sh"
+
+[tasks.tla]
+description = "Model-check every TLA+ spec (verification/tla/<spec>/MC.tla + MC.cfg)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s nullglob
+cd verification/tla 2>/dev/null || { echo "No specs in verification/tla yet"; exit 0; }
+meta=$(mktemp -d)
+trap 'rm -rf "$meta"' EXIT
+cfgs=(*/MC.cfg)
+[ -n "${cfgs[*]:-}" ] || { echo "No specs in verification/tla yet"; exit 0; }
+status=0
+for cfg in "${cfgs[@]}"; do
+  dir="${cfg%/MC.cfg}"
+  echo "=== $dir"
+  (cd "$dir" && tlc -config MC.cfg -workers auto -metadir "$meta/$dir" MC.tla) || status=1
+done
+exit $status
+'''
+
+[tasks.lean]
+description = "Build and check the Lean proofs in verification/lean"
+dir = "verification/lean"
+run = "lake build"

@@ -181,3 +181,8 @@ test/torturethread
 docs/output
 SDL.tag
 doxygen_warn.txt
+
+# Nix / direnv
+.direnv/
+result
+result-*
