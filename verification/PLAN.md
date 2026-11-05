@@ -77,15 +77,19 @@ in parallel.
 
 ### Phase 0: Foundations and reproducing the leads
 
-- [ ] Write `TRUSTED_BASE.md`. It records:
+- [x] Write `TRUSTED_BASE.md`. It records:
   - the pinned SDL commit
   - Lean, TLC and clang versions
   - per-spec bounds and backend abstractions
   - the memory-model assumption (sequentially consistent interleaving)
-- [ ] Get a sanitizer toolchain working in the dev shell. Configure SDL with
+- [x] Get a sanitizer toolchain working in the dev shell. Configure SDL with
   `-fsanitize=address,undefined` using the flake's clang. If nix clang can't link the ASan
   runtime on macOS, add `llvmPackages.compiler-rt` or document `/usr/bin/clang` as the
-  sanitizer compiler.
+  sanitizer compiler. *Done: nix clang's ASan hangs on macOS 27, so `mise run asan:build`
+  uses Apple clang (TRUSTED_BASE.md).*
+- [x] Tooling reproduction: `mise run repro` reproduces all three leads on a real ASan build.
+  The gamepad lead turned out to be live only on the 128-character joystick side; the
+  20-character game-button side is latent. See F-004, F-005 and F-006.
 - [ ] **Human step.** Reproduce the three leads from RESEARCH §10 on a real sanitizer build:
   - the `SDL_StepUTF8(…, NULL)` over-read
   - `StepUTF8` accepting codepoints above U+10FFFF
@@ -103,21 +107,27 @@ leads are confirmed or dismissed.
 These two are small and fully readable, so they are cheap pilots for the method itself: shared
 modules, mutants, coverage checks and the `mise run tla` loop.
 
+**Status (2026-11-04):** both specs are done. Results are in FINDINGS.md: F-001 (InitState
+proved within bounds), F-002 (correction: the generic condition variable is not used on macOS)
+and F-003 (a stale-token spurious wakeup in the generic condition variable).
+`tla/common/` was deferred. Both specs are self-contained, so the shared modules will be
+extracted when Phase 4 needs them.
+
 - [ ] `tla/common/`: `Mutex`, `Semaphore` and `AtomicRef` (compare-and-swap) operators.
-- [ ] `tla/initstate/`: model `SDL_ShouldInit`, `SDL_ShouldQuit` and `SDL_SetInitialized`
+- [x] `tla/initstate/`: model `SDL_ShouldInit`, `SDL_ShouldQuit` and `SDL_SetInitialized`
   (`src/thread/SDL_thread.c:556`) with N threads. Check:
   - at most one thread in INITIALIZING or UNINITIALIZING
   - init and quit bodies never overlap
   - every caller eventually returns, assuming the initializing thread eventually calls
     `SetInitialized`
   - include failed init (`SetInitialized(false)`).
-- [ ] `tla/cond_generic/`: write a PlusCal model of `src/thread/generic/SDL_syscond.c` over the
+- [x] `tla/cond_generic/`: write a model of `src/thread/generic/SDL_syscond.c` over the
   generic semaphore. Check:
   - no lost signal: a waiter that is waiting when `Signal` is called gets woken
   - `Broadcast` wakes all current waiters
   - no deadlock under timeouts
-  - this backend is live on macOS/iOS (RESEARCH §5 T3)
-- [ ] Commit at least one mutant per property, and record the coverage output.
+  - (correction: this backend is not used on macOS/iOS; see FINDINGS F-002)
+- [x] Commit at least one mutant per property, and record the coverage output.
 - [ ] Make module lookup for `common/` work: either set `-DTLA-Library` through the `tlc`
   wrapper's Java options or use per-spec symlinks. Update the `mise` task to match.
 
@@ -126,16 +136,28 @@ in `FINDINGS.md`.
 
 ### Phase 2: Lean pilot (UTF-8)
 
-- [ ] Create the `lean/` lake project with a `lean-toolchain` file. Add Mathlib only if a proof
+**Status (2026-11-04): forward decoding is done, the rest is open.**
+- `SDLVerif/Utf8.lean` has 12 theorems about `StepUTF8`. They cover bounds, progress, end of
+  string, RFC 3629 completeness and soundness, and an exact characterization of the out-of-range
+  bug. They also cover a model fix with a patch audit.
+- `mise run lean` checks the theorems, the axioms and seven proof mutants.
+- `mise run lean:diff` compares against the real C on 3,096,576 cases: every lead byte, times
+  12 boundary values for each continuation byte, times `slen` 0–5 and `NULL`. That is a
+  boundary grid, not all 2^32 sequences. All cases agree.
+- Not done yet: `SDL_StepBackUTF8`, `SDL_utf8strlcpy`, and an encoder with round-trip proofs.
+- Findings: F-004 and F-005, plus F-006 from the Phase 0 reproduction.
+
+- [x] Create the `lean/` lake project with a `lean-toolchain` file. Add Mathlib only if a proof
   needs it, because it is expensive to build.
-- [ ] `SDLVerif/Utf8.lean`:
+- [ ] `SDLVerif/Utf8.lean` (forward step done; StepBack, utf8strlcpy and the encoder open):
   - Write an executable RFC 3629 decoder model.
   - Write a model of SDL's documented `SDL_StepUTF8` / `SDL_StepBackUTF8` / `SDL_utf8strlcpy`
     contract, taken from `include/SDL3/SDL_stdinc.h`.
   - Prove that the model accepts exactly the well-formed sequences, never reads past
     `slen`/NUL, round-trips with an encoder, and that `StepBack` inverts `Step`.
   - Use `bv_decide` / `decide` for the byte-level lemmas.
-- [ ] `harness/utf8_diff.c` plus `lean/test/`: run SDL's C and the Lean executable on the same
+- [x] (boundary grid; the fuzzer-generated longer strings wait for Phase 3)
+  `lean/test/utf8_diff.c` plus `lean/test/`: run SDL's C and the Lean executable on the same
   inputs: exhaustive over all ≤4-byte sequences plus fuzzer-generated longer strings. Report
   every disagreement. Expected disagreements, such as codepoints above U+10FFFF if confirmed in
   Phase 0, are listed explicitly in `FINDINGS.md`, never silenced in the harness.

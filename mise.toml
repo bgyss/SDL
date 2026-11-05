@@ -34,7 +34,7 @@ description = "Format changed C sources with clang-format"
 run = "build-scripts/clang-format-src.sh"
 
 [tasks.tla]
-description = "Model-check every TLA+ spec (verification/tla/<spec>/MC.tla + MC.cfg)"
+description = "Model-check TLA+ specs: <spec>/MC.cfg must pass; each <spec>/mutants/*.cfg must fail on its EXPECT property"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -44,16 +44,104 @@ meta=$(mktemp -d)
 trap 'rm -rf "$meta"' EXIT
 cfgs=(*/MC.cfg)
 [ -n "${cfgs[*]:-}" ] || { echo "No specs in verification/tla yet"; exit 0; }
+# usage: check <dir> <cfg relative to dir> <output file>; returns TLC's exit status
+check() { (cd "$1" && tlc -config "$2" -workers auto -metadir "$3.meta" MC.tla) > "$3" 2>&1; }
 status=0
-for cfg in "${cfgs[@]}"; do
-  dir="${cfg%/MC.cfg}"
-  echo "=== $dir"
-  (cd "$dir" && tlc -config MC.cfg -workers auto -metadir "$meta/$dir" MC.tla) || status=1
+for mc in "${cfgs[@]}"; do
+  dir="${mc%/MC.cfg}"
+  echo "== $dir"
+  # Every top-level config (MC.cfg, MC_*.cfg) describes the real code and must pass.
+  for c in "$dir"/*.cfg; do
+    name=$(basename "$c" .cfg); out="$meta/$dir-$name.out"
+    if check "$dir" "$name.cfg" "$out"; then
+      echo "  PASS     $name: $(grep -E '^[0-9]+ states generated' "$out")"
+    else
+      echo "  FAIL     $name"; grep -E "^Error" "$out" || tail -20 "$out"; status=1
+    fi
+  done
+  # mutants/*.cfg (deliberately broken models) and findings/*.cfg (real-code
+  # counterexamples we keep reproducible) must fail on the property named in
+  # "\* EXPECT: <Invariant>", or "Temporal" / "Deadlock".
+  for c in "$dir"/mutants/*.cfg "$dir"/findings/*.cfg; do
+    kind=$(basename "$(dirname "$c")"); name=$(basename "$c" .cfg)
+    expect=$(sed -n 's/^\\\* EXPECT: *//p' "$c" | head -1)
+    case "$expect" in
+      Temporal) pat="Temporal properties were violated" ;;
+      Deadlock) pat="Deadlock reached" ;;
+      *)        pat="Invariant $expect is violated" ;;
+    esac
+    out="$meta/$dir-$kind-$name.out"
+    if check "$dir" "$kind/$name.cfg" "$out"; then
+      echo "  MISSED   $kind/$name: expected '$pat'"; status=1
+    elif grep -q "$pat" "$out"; then
+      echo "  ok       $kind/$name fails as expected: $pat"
+    else
+      echo "  WRONG    $kind/$name failed differently:"; grep -E "^Error" "$out" | head -3; status=1
+    fi
+  done
 done
 exit $status
 '''
 
 [tasks.lean]
-description = "Build and check the Lean proofs in verification/lean"
+description = "Check the Lean proofs, their axioms, and the proof mutants in verification/lean"
 dir = "verification/lean"
-run = "lake build"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+log=$(mktemp); trap 'rm -f "$log"' EXIT
+lake build -q > "$log" 2>&1 || { grep -v "ld64.lld: warning" "$log"; exit 1; }
+echo "proofs:  all theorems check"
+# Only the standard axioms and bv_decide's natively checked LRAT certificates are allowed.
+lake env lean test/Axioms.lean > "$log" 2>&1
+bad=$(tr ',[]' '\n\n\n' < "$log" | sed 's/^ *//' | grep -vE "depends on axioms:|^$|^propext$|^Classical\.choice$|^Quot\.sound$|\._native\.bv_decide\.ax_" || true)
+if [ -n "$bad" ]; then echo "axioms:  UNEXPECTED: $bad"; exit 1; fi
+echo "axioms:  $(grep -c 'depends on axioms' "$log") theorems, no sorry, only standard + bv_decide certificate axioms"
+echo "mutants:"
+test/mutants.sh
+'''
+
+[tasks."lean:diff"]
+description = "Differential test of the Lean models against the real SDL build"
+depends = ["build"]
+dir = "verification/lean"
+run = "test/utf8_diff.sh ../../build"
+
+# Sanitizer builds use Apple's clang: on macOS 27 the nix clang 21 ASan runtime hangs at
+# startup, even for a plain hello world. Inside the dev shell, /usr/bin/clang is an xcrun shim
+# that follows DEVELOPER_DIR/SDKROOT to the nix SDK, so both are reset for these tasks.
+[tasks."asan:build"]
+description = "Build SDL with ASan+UBSan into ./build-asan (Apple clang on macOS, nix clang elsewhere)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+san="-fsanitize=address,undefined -fno-omit-frame-pointer"
+if [ "$(uname -s)" = Darwin ]; then
+  dev=$(env -u DEVELOPER_DIR xcode-select -p)
+  run() { env -u SDKROOT DEVELOPER_DIR="$dev" "$@"; }
+  cc=(-DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++)
+else
+  run() { "$@"; }
+  cc=()
+fi
+run cmake -S . -B build-asan -G Ninja "${cc[@]}" -DCMAKE_BUILD_TYPE=Debug \
+  -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF \
+  "-DCMAKE_C_FLAGS=$san" "-DCMAKE_OBJC_FLAGS=$san" "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined"
+run cmake --build build-asan
+'''
+
+[tasks.repro]
+description = "Run the FINDINGS.md lead reproductions against ./build-asan: mise run repro -- <mode>"
+depends = ["asan:build"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(uname -s)" = Darwin ]; then cc() { env -u SDKROOT -u DEVELOPER_DIR /usr/bin/clang "$@"; }; fi
+cc -g -fsanitize=address,undefined -fno-omit-frame-pointer -I include verification/harness/repro_leads.c \
+  -L build-asan -lSDL3 -Wl,-rpath,"$PWD/build-asan" -o build-asan/repro_leads
+modes=("$@"); [ -n "${modes[*]:-}" ] || modes=(utf8-range utf8-null gamepad gamepad-joy)
+for m in "${modes[@]}"; do
+  echo "===== $m"
+  build-asan/repro_leads "$m" 2>&1 | grep -E "^(utf8|gamepad)|ERROR: AddressSanitizer|READ of size|    #[0-4] |overflows this variable|is located 0 bytes" || true
+done
+'''

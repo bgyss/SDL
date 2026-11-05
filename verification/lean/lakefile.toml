@@ -1,0 +1,12 @@
+name = "SDLVerif"
+version = "0.1.0"
+defaultTargets = ["SDLVerif", "utf8-diff"]
+
+[[lean_lib]]
+name = "SDLVerif"
+
+# Prints the Lean model's results for the differential test against the C
+# (see test/utf8_diff.sh).
+[[lean_exe]]
+name = "utf8-diff"
+root = "test.Utf8Diff"
