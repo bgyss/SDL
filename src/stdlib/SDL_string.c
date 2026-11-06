@@ -222,8 +222,10 @@ static Uint32 StepUTF8(const char **_str, const size_t slen)
             }
         }
     } else if (((octet & 0xF0) == 0xE0) && (slen >= 3)) {  // 1110xxxx 10xxxxxx 10xxxxxx: three byte codepoint.
+        // Check each trailing byte before reading the next one, so a NUL terminator stops us
+        // (bgyss/SDL F-004: SDL_StepUTF8(&p, NULL) and SDL_strcasecmp pass slen = 4).
         const Uint8 str1 = str[1];
-        const Uint8 str2 = str[2];
+        const Uint8 str2 = ((str1 & 0xC0) == 0x80) ? str[2] : 0;
         if (((str1 & 0xC0) == 0x80) && ((str2 & 0xC0) == 0x80)) {  // If trailing bytes aren't 10xxxxxx, sequence is bogus.
             const Uint32 octet2 = ((Uint32) (str1 & 0x3F)) << 6;
             const Uint32 octet3 = ((Uint32) (str2 & 0x3F));
@@ -236,15 +238,18 @@ static Uint32 StepUTF8(const char **_str, const size_t slen)
             }
         }
     } else if (((octet & 0xF8) == 0xF0) && (slen >= 4)) {  // 11110xxxx 10xxxxxx 10xxxxxx 10xxxxxx: four byte codepoint.
+        // As above, never read past a byte that is not a trailing byte (F-004).
         const Uint8 str1 = str[1];
-        const Uint8 str2 = str[2];
-        const Uint8 str3 = str[3];
+        const Uint8 str2 = ((str1 & 0xC0) == 0x80) ? str[2] : 0;
+        const Uint8 str3 = ((str2 & 0xC0) == 0x80) ? str[3] : 0;
         if (((str1 & 0xC0) == 0x80) && ((str2 & 0xC0) == 0x80) && ((str3 & 0xC0) == 0x80)) {  // If trailing bytes aren't 10xxxxxx, sequence is bogus.
             const Uint32 octet2 = ((Uint32) (str1 & 0x3F)) << 12;
             const Uint32 octet3 = ((Uint32) (str2 & 0x3F)) << 6;
             const Uint32 octet4 = ((Uint32) (str3 & 0x3F));
             const Uint32 result = ((octet & 0x07) << 18) | octet2 | octet3 | octet4;
-            if (result >= 0x10000) {  // rfc3629 says you can't use overlong sequences for smaller values.
+            // rfc3629 says you can't use overlong sequences for smaller values, and that
+            // nothing above U+10FFFF is a codepoint (bgyss/SDL F-005).
+            if ((result >= 0x10000) && (result <= 0x10FFFF)) {
                 *_str += 4;
                 return result;
             }
@@ -283,8 +288,16 @@ Uint32 SDL_StepBackUTF8(const char *start, const char **pstr)
     } while ((*str & 0xC0) == 0x80);
 
     size_t length = (*pstr - str);
+    const char *decoded = str;
+    const Uint32 result = StepUTF8(&decoded, length);
+    if (result != 0 && (size_t)(decoded - str) != length) {
+        // The bytes we walked back over are not one character: report the last byte as invalid
+        // instead of silently skipping the stray trailing bytes (bgyss/SDL F-008).
+        *pstr -= 1;
+        return SDL_INVALID_UNICODE_CODEPOINT;
+    }
     *pstr = str;
-    return StepUTF8(&str, length);
+    return result;
 }
 
 #if (SDL_SIZEOF_WCHAR_T == 2)
@@ -1057,7 +1070,9 @@ size_t SDL_utf8strlcpy(SDL_OUT_Z_CAP(dst_bytes) char *dst, const char *src, size
 			if (UTF8_IsLeadByte(c)) {
 				--bytes;
 			} else if (UTF8_IsTrailingByte(c)) {
-				for (i = bytes - 1; i != 0; --i) {
+				// Scan back to the lead byte, including src[0] (bgyss/SDL F-007: stopping at
+				// i != 0 kept a truncated first character).
+				for (i = bytes - 1; ; --i) {
 					c = (unsigned char)src[i];
 					trailing_bytes = UTF8_GetTrailingBytes(c);
 					if (trailing_bytes) {
@@ -1065,6 +1080,9 @@ size_t SDL_utf8strlcpy(SDL_OUT_Z_CAP(dst_bytes) char *dst, const char *src, size
 							bytes = i;
 						}
 
+						break;
+					}
+					if (i == 0) {
 						break;
 					}
 				}

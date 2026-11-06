@@ -68,20 +68,26 @@ static bool readRlePixels(SDL_Surface *surface, SDL_IOStream *src, int isRle8)
     /*
     | Sets the surface pixels from src.  A bmp image is upside down.
     */
-    int pitch = surface->pitch;
-    int height = surface->h;
+    /* The current row is tracked as a byte offset from the start of the pixels rather than as a
+       pointer: end-of-line and delta escapes can move it outside the buffer, and forming such
+       a pointer is undefined behavior even if it is never written through (bgyss/SDL F-017).
+       Writes outside the buffer are still ignored. */
+    const Sint64 pitch = surface->pitch;
+    const Sint64 size = (Sint64)surface->h * pitch;
     Uint8 *start = (Uint8 *)surface->pixels;
-    Uint8 *end = start + (height * pitch);
-    Uint8 *bits = end - pitch, *spot;
-    int ofs = 0;
+    Sint64 bits = size - pitch;
+    Sint64 ofs = 0;
     Uint8 ch;
     Uint8 needsPad;
     const int pixels_per_byte = (isRle8 ? 1 : 2);
 
-#define COPY_PIXEL(x)                \
-    spot = &bits[ofs++];             \
-    if (spot >= start && spot < end) \
-        *spot = (x)
+#define COPY_PIXEL(x)                           \
+    do {                                        \
+        const Sint64 spot = bits + ofs++;       \
+        if (spot >= 0 && spot < size) {         \
+            start[spot] = (x);                  \
+        }                                       \
+    } while (0)
 
     for (;;) {
         if (!SDL_ReadU8(src, &ch)) {
@@ -128,7 +134,7 @@ static bool readRlePixels(SDL_Surface *surface, SDL_IOStream *src, int isRle8)
                 if (!SDL_ReadU8(src, &ch)) {
                     return false;
                 }
-                bits -= (ch * pitch);
+                bits -= (Sint64)ch * pitch;
                 break;
             default: // no compression
                 // !!! FIXME: this needsPad calculation can probably be simpler than this.
@@ -359,6 +365,10 @@ SDL_Surface *SDL_LoadBMP_IO(SDL_IOStream *src, bool closeio)
         }
     }
     if (biWidth <= 0 || biHeight == 0) {
+        SDL_SetError("BMP file with bad dimensions (%" SDL_PRIs32 "x%" SDL_PRIs32 ")", biWidth, biHeight);
+        goto done;
+    }
+    if (biHeight == SDL_MIN_SINT32) {  // can't be negated (bgyss/SDL F-018)
         SDL_SetError("BMP file with bad dimensions (%" SDL_PRIs32 "x%" SDL_PRIs32 ")", biWidth, biHeight);
         goto done;
     }

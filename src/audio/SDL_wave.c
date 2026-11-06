@@ -1325,8 +1325,10 @@ static bool PCM_Init(WaveFile *file, size_t datalength)
     /* It wouldn't be that hard to support more exotic block sizes, but
      * the most common formats should do for now.
      */
-    // Make sure we're a multiple of the blockalign, at least.
-    if ((format->channels * format->bitspersample) % (format->blockalign * 8)) {
+    // A block must be exactly one sample frame. The old check only required the frame to be a
+    // multiple of the block, which let blocks smaller than a frame through, and sampleframes
+    // then counted blocks instead of frames (bgyss/SDL F-016).
+    if ((Uint64)format->blockalign * 8 != (Uint64)format->channels * format->bitspersample) {
         return SDL_SetError("Unsupported block alignment");
     }
 
@@ -2040,7 +2042,7 @@ static bool WaveLoad(SDL_IOStream *src, WaveFile *file, SDL_AudioSpec *spec, Uin
      * by checks earlier in this function.
      */
     spec->freq = format->frequency;
-    spec->channels = (Uint8)format->channels;
+    spec->channels = (int)format->channels;  // was (Uint8), which truncated counts above 255 (bgyss/SDL F-010)
     spec->format = SDL_AUDIO_UNKNOWN;
 
     switch (format->encoding) {

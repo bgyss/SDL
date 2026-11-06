@@ -1,8 +1,9 @@
 import SDLVerif.Utf8
 open SDLVerif.Utf8
 
-/-! Prints `cStep` on a fixed input grid, one line per case, in the same format as
+/-! Prints `cFixed` (the fork's StepUTF8) on a fixed input grid, one line per case, in the same format as
 `test/utf8_diff.c` prints the real `SDL_StepUTF8`. `test/utf8_diff.sh` diffs the two.
+Since the fork fixed F-004/F-005 (2026-11-05) the C is `cFixed`; `cStep` is the pre-fix code.
 
 The grid is every lead byte, times "interesting" values for the continuation bytes (every
 range boundary RFC 3629 or the C cares about), times lengths 0..5. -/
@@ -17,11 +18,11 @@ def main : IO Unit := do
       for b2 in interesting do
         for b3 in interesting do
           let step (slen : Nat) :=
-            cStep (BitVec.ofNat 8 b0) (BitVec.ofNat 8 b1) (BitVec.ofNat 8 b2)
+            cFixed (BitVec.ofNat 8 b0) (BitVec.ofNat 8 b1) (BitVec.ofNat 8 b2)
                   (BitVec.ofNat 8 b3) (BitVec.ofNat 64 slen)
           for slen in List.range 6 do
             let r := step slen
             out.putStrLn s!"{b0} {b1} {b2} {b3} {slen} {r.cp.toNat} {r.adv.toNat}"
-          -- SDL_StepUTF8(&p, NULL) is StepUTF8(&p, 4) (SDL_string.c:262)
+          -- SDL_StepUTF8(&p, NULL) is StepUTF8(&p, 4)
           let r := step 4
           out.putStrLn s!"{b0} {b1} {b2} {b3} N {r.cp.toNat} {r.adv.toNat}"

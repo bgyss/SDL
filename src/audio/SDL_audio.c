@@ -407,6 +407,24 @@ static bool SDL_IsAudioDeviceRecording(SDL_AudioDeviceID devid)
     return (devid & (1 << 0)) == 0;
 }
 
+/* Take a reference only if the device is still alive (count > 0). Call this with
+   subsystem_rwlock held for reading, on a device found in the hash: UnrefPhysicalAudioDevice
+   drops the count to 0 *before* it takes the write lock to remove the device, so a plain
+   increment here could resurrect a device that is about to be freed (bgyss/SDL F-020; model:
+   verification/tla/audio_device, MC_fix.cfg and findings/ref_in_lock.cfg). */
+static bool TryRefPhysicalAudioDevice(SDL_AudioDevice *device)
+{
+    for (;;) {
+        const int count = SDL_GetAtomicInt(&device->refcount);
+        if (count <= 0) {
+            return false;
+        }
+        if (SDL_CompareAndSwapAtomicInt(&device->refcount, count, count + 1)) {
+            return true;
+        }
+    }
+}
+
 static void ObtainPhysicalAudioDeviceObj(SDL_AudioDevice *device) SDL_NO_THREAD_SAFETY_ANALYSIS  // !!! FIXMEL SDL_ACQUIRE
 {
     if (device) {
@@ -487,15 +505,20 @@ static SDL_AudioDevice *ObtainPhysicalAudioDevice(SDL_AudioDeviceID devid)  // !
     } else if (!SDL_GetCurrentAudioDriver()) {  // (the `islogical` path, above, checks this in ObtainLogicalAudioDevice.)
         SDL_SetError("Audio subsystem is not initialized");
     } else {
+        // Find the device and take its reference under the same read lock (bgyss/SDL F-020:
+        // referencing it after the unlock could touch a device freed in between).
         SDL_LockRWLockForReading(current_audio.subsystem_rwlock);
         SDL_FindInHashTable(current_audio.device_hash_physical, (const void *) (uintptr_t) devid, (const void **) &device);
         SDL_assert(!device || (device->instance_id == devid));
+        if (device && !TryRefPhysicalAudioDevice(device)) {
+            device = NULL;  // being destroyed: treat it as already gone.
+        }
         SDL_UnlockRWLock(current_audio.subsystem_rwlock);
 
         if (!device) {
             SDL_SetError("Invalid audio device instance ID");
         } else {
-            ObtainPhysicalAudioDeviceObj(device);
+            SDL_LockMutex(device->lock);  // the reference was taken above.
         }
     }
 

@@ -315,6 +315,10 @@ size_t SDL_iconv(SDL_iconv_t cd,
         *(Uint16 *)dst = UNICODE_BOM;
         dst += 2;
         dstlen -= 2;
+        // Report the BOM now: dst_fmt switches to native order below, so if the first
+        // character returns E2BIG the BOM would otherwise be lost (bgyss/SDL F-011).
+        *outbuf = dst;
+        *outbytesleft = dstlen;
         cd->dst_fmt = ENCODING_UTF16NATIVE;
         break;
     case ENCODING_UTF32:
@@ -325,6 +329,10 @@ size_t SDL_iconv(SDL_iconv_t cd,
         *(Uint32 *)dst = UNICODE_BOM;
         dst += 4;
         dstlen -= 4;
+        // Report the BOM now: dst_fmt switches to native order below, so if the first
+        // character returns E2BIG the BOM would otherwise be lost (bgyss/SDL F-011).
+        *outbuf = dst;
+        *outbytesleft = dstlen;
         cd->dst_fmt = ENCODING_UTF32NATIVE;
         break;
     }

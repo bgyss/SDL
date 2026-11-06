@@ -1,4 +1,4 @@
-import SDLVerif.Utf8String
+import SDLVerif.Utf8Fixed
 open SDLVerif.Utf8
 
 /-! Corpus differential test for the string-level models (Utf8String.lean). Reads one hex
@@ -22,13 +22,13 @@ def parseHex : List Char → List Byte
 def fwdSteps (s : Bytes) : Nat → Nat → List (Nat × Nat)
   | 0, _ => []
   | fuel + 1, i =>
-    let r := stepAt s i (s.length - i)
+    let r := stepAtF s i (s.length - i)
     if r.cp = 0 then [] else (r.cp.toNat, i) :: fwdSteps s fuel (i + r.adv.toNat)
 
 def backSteps (s : Bytes) : Nat → Nat → List (Nat × Nat)
   | 0, _ => []
   | fuel + 1, p =>
-    let r := cStepBack s p
+    let r := cStepBackFix s p
     if r.1 = 0 then [] else (r.1.toNat, r.2) :: backSteps s fuel r.2
 
 def showSteps (l : List (Nat × Nat)) : String :=
@@ -41,7 +41,7 @@ partial def loop (h : IO.FS.Stream) (out : IO.FS.Stream) : IO Unit := do
   let n := s.length
   out.putStrLn s!"F{showSteps (fwdSteps s (n + 1) 0)}"
   out.putStrLn s!"B{showSteps (backSteps s (n + 1) n)}"
-  out.putStrLn s!"L{String.join ((List.range (n + 2)).map fun d => s!" {cLcpy s (d + 1)}")}"
+  out.putStrLn s!"L{String.join ((List.range (n + 2)).map fun d => s!" {fixLcpy s (d + 1)}")}"
   loop h out
 
 def main : IO Unit := do

@@ -62,3 +62,11 @@ open SDLVerif.Utf8 in
 #print axioms fixLcpy_wf
 open SDLVerif.Utf8 in
 #print axioms lcpy_c_vs_fixed
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_spec
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_sound
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_enc
+open SDLVerif.Utf8 in
+#print axioms stepF_enc

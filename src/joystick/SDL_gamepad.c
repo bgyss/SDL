@@ -1703,7 +1703,9 @@ static bool SDL_PrivateParseGamepadElement(SDL_Gamepad *gamepad, const char *szG
     if (*szJoystickButton == '+' || *szJoystickButton == '-') {
         half_axis_input = *szJoystickButton++;
     }
-    if (szJoystickButton[SDL_strlen(szJoystickButton) - 1] == '~') {
+    // An empty binding ("a:," or a lone sign) has no last character (bgyss/SDL F-009).
+    const size_t joystick_button_len = SDL_strlen(szJoystickButton);
+    if (joystick_button_len > 0 && szJoystickButton[joystick_button_len - 1] == '~') {
         invert_input = true;
     }
 
@@ -1787,14 +1789,14 @@ static bool SDL_PrivateParseGamepadConfigString(SDL_Gamepad *gamepad, const char
             SDL_zeroa(szJoystickButton);
 
         } else if (bGameButton) {
-            if (i >= sizeof(szGameButton)) {
+            if (i >= sizeof(szGameButton) - 1) {  // leave room for the terminator (bgyss/SDL F-006)
                 szGameButton[sizeof(szGameButton) - 1] = '\0';
                 return SDL_SetError("Button name too large: %s", szGameButton);
             }
             szGameButton[i] = *pchPos;
             i++;
         } else {
-            if (i >= sizeof(szJoystickButton)) {
+            if (i >= sizeof(szJoystickButton) - 1) {  // leave room for the terminator (bgyss/SDL F-006)
                 szJoystickButton[sizeof(szJoystickButton) - 1] = '\0';
                 return SDL_SetError("Joystick button name too large: %s", szJoystickButton);
             }
@@ -2734,7 +2736,7 @@ static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
     if (!SDL_strstr(mapping->mapping, SDL_GAMEPAD_PLATFORM_FIELD)) {
         // add memory for ',' + platform:PLATFORM
         need_platform = true;
-        if (mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {
+        if (*mapping->mapping && mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {  // guard the empty mapping: bgyss/SDL F-013
             needed += 1;
         }
         platform = SDL_GetPlatform();
@@ -2749,7 +2751,7 @@ static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
     (void)SDL_snprintf(pMappingString, needed, "%s,%s,%s", pchGUID, mapping->name, mapping->mapping);
 
     if (need_platform) {
-        if (mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {
+        if (*mapping->mapping && mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {  // guard the empty mapping: bgyss/SDL F-013
             SDL_strlcat(pMappingString, ",", needed);
         }
         SDL_strlcat(pMappingString, SDL_GAMEPAD_PLATFORM_FIELD, needed);
