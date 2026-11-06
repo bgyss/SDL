@@ -837,7 +837,10 @@ JNIEXPORT void JNICALL SDL_JAVA_AUDIO_INTERFACE(nativeRemoveAudioDevice)(JNIEnv 
 #if ALLOW_MULTIPLE_ANDROID_AUDIO_DEVICES
     if (SDL_GetCurrentAudioDriver() != NULL) {
         SDL_Log("Removing device with handle %d, recording %d", device_id, recording);
-        SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByHandle((void *)((size_t)device_id)));
+        // Hold a reference across the call (bgyss/SDL F-021).
+        SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByHandle((void *)((size_t)device_id));
+        SDL_AudioDeviceDisconnected(device);
+        UnrefPhysicalAudioDevice(device);
     }
 #endif
 }

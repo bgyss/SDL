@@ -271,7 +271,11 @@ static OSStatus DefaultAudioDeviceChangedNotification(const bool recording, Audi
     AudioDeviceID devid;
     UInt32 size = sizeof(devid);
     if (AudioObjectGetPropertyData(inObjectID, addr, 0, NULL, &size, &devid) == noErr) {
-        SDL_DefaultAudioDeviceChanged(FindCoreAudioDeviceByHandle(devid, recording));
+        // Hold a reference across the call, so a concurrent disconnect can't free the device (bgyss/SDL F-021).
+        SDLCoreAudioHandle handle = { devid, recording };
+        SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByCallback(TestCoreAudioDeviceHandleCallback, &handle);
+        SDL_DefaultAudioDeviceChanged(device);
+        UnrefPhysicalAudioDevice(device);
     }
     return noErr;
 }

@@ -940,8 +940,10 @@ static void HotplugCallback(pa_context *c, pa_subscription_event_type_t t, uint3
         } else if (added && source) {
             PULSEAUDIO_pa_operation_unref(PULSEAUDIO_pa_context_get_source_info_by_index(pulseaudio_context, idx, SourceInfoCallback, NULL));
         } else if (removed && (sink || source)) {
-            // removes we can handle just with the device index.
-            SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByCallback(FindAudioDeviceByIndex, (void *)(uintptr_t)idx));
+            // removes we can handle just with the device index. Hold a reference across the call (bgyss/SDL F-021).
+            SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByCallback(FindAudioDeviceByIndex, (void *)(uintptr_t)idx);
+            SDL_AudioDeviceDisconnected(device);
+            UnrefPhysicalAudioDevice(device);
         }
     }
     PULSEAUDIO_pa_threaded_mainloop_signal(pulseaudio_threaded_mainloop, 0);
@@ -955,9 +957,11 @@ static bool CheckDefaultDevice(const bool changed, char *device_path)
         return true;  // check again later, we don't have a device name...
     }
 
-    SDL_AudioDevice *device = SDL_FindPhysicalAudioDeviceByCallback(FindAudioDeviceByPath, device_path);
+    // Hold a reference across the call, so a concurrent disconnect can't free the device (bgyss/SDL F-021).
+    SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByCallback(FindAudioDeviceByPath, device_path);
     if (device) {  // if NULL, we might still be waiting for a SinkInfoCallback or something, we'll try later.
         SDL_DefaultAudioDeviceChanged(device);
+        UnrefPhysicalAudioDevice(device);
         return false;  // changing complete, set flag to unchanged for future tests.
     }
     return true;  // couldn't find the changed device, leave it marked as changed to try again later.

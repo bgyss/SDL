@@ -1390,6 +1390,14 @@ static int hotplug_device_process(snd_ctl_t *ctl, snd_ctl_card_info_t *ctl_card_
     return -1;
 }
 
+// Hold a reference across the disconnect, so a concurrent unref can't free the device in between (bgyss/SDL F-021).
+static void ALSA_DisconnectDevice(ALSA_Device *handle)
+{
+    SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByHandle(handle);
+    SDL_AudioDeviceDisconnected(device);
+    UnrefPhysicalAudioDevice(device);
+}
+
 static void ALSA_HotplugIteration(bool *has_default_output, bool *has_default_recording)
 {
     if (has_default_output != NULL) {
@@ -1459,7 +1467,7 @@ static void ALSA_HotplugIteration(bool *has_default_output, bool *has_default_re
 
     // remove only the unseen devices
     while (unseen) {
-        SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByHandle(unseen));
+        ALSA_DisconnectDevice(unseen);
         SDL_free(unseen->name);
         SDL_free(unseen->id);
         ALSA_Device *next = unseen->next;
@@ -1479,7 +1487,7 @@ failed:
 
     // remove the unseen
     while (unseen) {
-        SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByHandle(unseen));
+        ALSA_DisconnectDevice(unseen);
         SDL_free(unseen->name);
         SDL_free(unseen->id);
         ALSA_Device *next = unseen->next;
@@ -1489,7 +1497,7 @@ failed:
 
     // remove the seen
     while (seen) {
-        SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByHandle(seen));
+        ALSA_DisconnectDevice(seen);
         SDL_free(seen->name);
         SDL_free(seen->id);
         ALSA_Device *next = seen->next;

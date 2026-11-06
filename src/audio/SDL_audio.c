@@ -650,6 +650,9 @@ static void DestroyPhysicalAudioDevice(SDL_AudioDevice *device)
 // Don't hold the device lock when calling this, as we may destroy the device!
 void UnrefPhysicalAudioDevice(SDL_AudioDevice *device)
 {
+    if (!device) {
+        return;  // so a SDL_FindAndRefPhysicalAudioDevice*() result can be released unchecked.
+    }
     if (SDL_AtomicDecRef(&device->refcount)) {
         // take it out of the device list.
         SDL_LockRWLockForWriting(current_audio.subsystem_rwlock);
@@ -1601,6 +1604,7 @@ typedef struct FindAudioDeviceByCallbackData
 {
     bool (*callback)(void *userdata, SDL_AudioDevice *device);
     void *userdata;
+    bool take_ref;
     SDL_AudioDevice *retval;
 } FindAudioDeviceByCallbackData;
 
@@ -1611,6 +1615,9 @@ static bool SDLCALL FindAudioDeviceByCallback(void *userdata, const SDL_HashTabl
     SDL_assert(SDL_IsAudioDevicePhysical(devid));  // should only be iterating device_hash_physical.
     SDL_AudioDevice *device = (SDL_AudioDevice *) value;
     if (data->callback(data->userdata, device)) {  // found it?
+        if (data->take_ref && !TryRefPhysicalAudioDevice(device)) {
+            return true;  // its last reference is gone and it's about to be removed: skip it (bgyss/SDL F-021).
+        }
         data->retval = device;
         SDL_assert(data->retval->instance_id == devid);
         return false;  // stop iterating, we found it.
@@ -1618,14 +1625,14 @@ static bool SDLCALL FindAudioDeviceByCallback(void *userdata, const SDL_HashTabl
     return true;  // keep iterating.
 }
 
-SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+static SDL_AudioDevice *FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata, bool take_ref)
 {
     if (!SDL_GetCurrentAudioDriver()) {
         SDL_SetError("Audio subsystem is not initialized");
         return NULL;
     }
 
-    FindAudioDeviceByCallbackData data = { callback, userdata, NULL };
+    FindAudioDeviceByCallbackData data = { callback, userdata, take_ref, NULL };
     SDL_LockRWLockForReading(current_audio.subsystem_rwlock);
     SDL_IterateHashTable(current_audio.device_hash_physical, FindAudioDeviceByCallback, &data);
     SDL_UnlockRWLock(current_audio.subsystem_rwlock);
@@ -1637,6 +1644,21 @@ SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *us
     return data.retval;
 }
 
+SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+{
+    return FindPhysicalAudioDeviceByCallback(callback, userdata, false);
+}
+
+/* The result holds a reference taken under the same read lock as the search, so a concurrent
+   disconnect can't free the device before the caller is done with it. Backends used to find a
+   device with the unreferenced version and pass it to SDL_AudioDeviceDisconnected or
+   SDL_DefaultAudioDeviceChanged, which take their reference only after the lock is gone: the
+   same window as F-020 (bgyss/SDL F-021). */
+SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+{
+    return FindPhysicalAudioDeviceByCallback(callback, userdata, true);
+}
+
 static bool TestDeviceHandleCallback(void *handle, SDL_AudioDevice *device)
 {
     return device->handle == handle;
@@ -1645,6 +1667,11 @@ static bool TestDeviceHandleCallback(void *handle, SDL_AudioDevice *device)
 SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByHandle(void *handle)
 {
     return SDL_FindPhysicalAudioDeviceByCallback(TestDeviceHandleCallback, handle);
+}
+
+SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByHandle(void *handle)
+{
+    return SDL_FindAndRefPhysicalAudioDeviceByCallback(TestDeviceHandleCallback, handle);
 }
 
 const char *SDL_GetAudioDeviceName(SDL_AudioDeviceID devid)
