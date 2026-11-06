@@ -22,8 +22,9 @@ not been reproduced against a real SDL build.
   out-of-range codepoint. The third, an off-by-one that leaves a gamepad-mapping buffer
   unterminated, was confirmed with a stand-in consumer. Two concurrency **hypotheses** are best
   checked with TLA+: a lost wakeup in `SDL_WaitEventTimeout` and a find-then-ref window in
-  `ObtainPhysicalAudioDevice`. Details are in §5 and §6. A human must confirm each one on a real
-  build before it is reported anywhere.
+  `ObtainPhysicalAudioDevice`. Details are in §5 and §6. (Update 2026-11-05: all five are now
+  reproduced on real ASan builds by `verification/repro/`, and fixed. This fork has no manual
+  reproduction step; see FINDINGS.md.)
 * The highest-value targets are:
   * TLA+:
     1. event-wait/wakeup protocol
@@ -522,11 +523,8 @@ PR authors must confirm they wrote their changes and license them under zlib. Th
 What follows from the policy:
 * All specs, proofs, harnesses and trace instrumentation stay in the fork, under `verification/`.
   Nothing from this work goes into an upstream PR.
-* A finding such as §6 L1, L3 or §5 T1 is upstream-relevant only after **a human** reproduces it on
-  a real build, understands it, and writes the report and any fix **in their own words**. No
-  AI-written text, patch, or proof should be attached. Whether a human-written report of an
-  AI-assisted finding meets the policy is for that human to judge against its wording ("should not
-  be used in any way"). This document does not resolve it.
+* No AI-written text, patch, or proof may go to upstream. (Settled 2026-11-05: nothing from this
+  fork goes upstream at all, so the question of a human-written report no longer arises.)
 * Keep `verification/` isolated so `src/` stays mergeable with upstream:
   * no edits to `src/`
   * trace macros live in a `verification/instrument/` overlay header, injected with a CMake option
@@ -622,7 +620,7 @@ To redo these on a real build: build SDL with `-fsanitize=address,undefined`, th
    I did not read those repos' READMEs or licenses.
 6. **Appendix.** I did not read the article's appendix PDF. It may contain spec-gaming metrics or
    method details that matter for §7.
-7. **Reporting.** For findings that hold up, does the user want to report them upstream personally,
-   given §8? If so, the human-reproduction step in §10 comes first.
+7. **Reporting.** Settled 2026-11-05: nothing is reported upstream. Findings are reproduced by
+   `verification/repro/` and fixed in the fork.
 8. **Tool versions.** Should the project pin TLA+ to the tagged `v1.7.4` or to a dated nightly? Does
    nixpkgs provide either?

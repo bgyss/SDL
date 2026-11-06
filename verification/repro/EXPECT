@@ -29,3 +29,4 @@ f018_bmp_int_min      F-018  ubsan:negation@SDL_bmp.c                           
 f019_lost_wakeup      F-019  bug                                                      ok
 f020_audio_lookup_uaf F-020  asan:heap-use-after-free|attempting@SDL_GetAudioDeviceFormat ok
 f021_audio_find_by_handle F-021 asan:heap-use-after-free|attempting@backend_device_removed ok
+f022_gamepad_axis_overflow F-022 asan:heap-buffer-overflow@SDL_PrivateLoadButtonMapping ok

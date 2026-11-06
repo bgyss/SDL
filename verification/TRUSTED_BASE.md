@@ -7,8 +7,9 @@ Update it whenever a tool version, pinned commit or model bound changes.
 
 | Item | Value |
 |---|---|
-| SDL source the models describe | `cb6224d2e` (fork). Its `src/` is identical to upstream `87f0e4a25`; the fork only changed docs and tooling. |
-| Re-check needed when | any file named in a spec header changes upstream. |
+| Pre-fix SDL source (findings, line numbers, "pre-fix" configs) | `cb6224d2e` (fork). Its `src/` is identical to upstream `87f0e4a25`; the fork only changed docs and tooling. Also the base tree of `repro/run.sh`. |
+| Current SDL source (`MC_fix.cfg` configs, Lean `*Fixed` models, trace validation) | the fixes in `cce7d368b` (F-004 – F-020) and the F-021 commit after it. |
+| Re-check needed when | any file named in a spec header changes. `instrument/build.sh` fails when an instrumentation patch no longer applies, which flags the audio and events code. |
 
 ## Tools
 
@@ -44,12 +45,48 @@ Update it whenever a tool version, pinned commit or model bound changes.
 | `tla/cond_generic` | `MC.cfg` | 3 consumers, 3 producers, tickets client, untimed waits, signal inside or outside the mutex, Signal or Broadcast | SF per thread |
 | `tla/cond_generic` | `MC_timeouts.cfg` | 2 consumers, 2 producers, tickets client, any semaphore wait may time out | SF per thread |
 | `tla/cond_generic` | `MC_flag.cfg` | 3 consumers, 1 producer, flag + Broadcast client, timeouts | SF per thread |
-| `tla/events_wait` | `MC.cfg` | real code; 1 waiting thread, 3 producers × 1 event; timed waits (the app calls again after a timeout) | WF per thread |
-| `tla/events_wait` | `MC_fix.cfg` | publish-then-check order (model fix); 3 producers; untimed `SDL_WaitEvent` | WF per thread |
-| `tla/events_wait` | `findings/*.cfg` | real code; 1 producer; untimed (deadlock) and timed (`NoLostWakeup`) | WF per thread |
-| `tla/audio_device` | `MC.cfg` | real code; device held open by the app; main-thread disconnect + 2 lookup threads | WF per thread |
-| `tla/audio_device` | `MC_fix.cfg` | increment-if-nonzero under the read lock (model fix); device not open; 2 lookup threads | WF per thread |
-| `tla/audio_device` | `findings/*.cfg` | real code and the naive ref-in-lock fix; device not open; 1 lookup thread | WF per thread |
+| `tla/events_wait` | `MC.cfg` | pre-fix code; 1 waiting thread, 3 producers × 1 event; timed waits (the app calls again after a timeout) | WF per thread |
+| `tla/events_wait` | `MC_fix.cfg` | current code: publish-then-check order; 3 producers; untimed `SDL_WaitEvent` | WF per thread |
+| `tla/events_wait` | `findings/*.cfg` | pre-fix code; 1 producer; untimed (deadlock) and timed (`NoLostWakeup`) | WF per thread |
+| `tla/audio_device` | `MC.cfg` | pre-fix code; device held open by the app; main-thread disconnect + 2 lookup threads | WF per thread |
+| `tla/audio_device` | `MC_fix.cfg` | current code: increment-if-nonzero under the read lock; device not open; 2 lookup threads | WF per thread |
+| `tla/audio_device` | `findings/*.cfg` | pre-fix code and the naive ref-in-lock fix; device not open; 1 lookup thread | WF per thread |
+
+Since 2026-11-05, `tla/events_wait` also models the entry pump and queue check that
+`SDL_WaitEventTimeoutNS` does before the device loop, and the separate clear of
+`wakeup_window` after a take in the fixed code. Trace validation found the first one missing.
+
+## Trace validation (Phase 4)
+
+`mise run trace` (`instrument/trace_check.sh`) links the models to the current code:
+
+1. `instrument/build.sh` exports the working tree, applies `instrument/<spec>.patch` to the
+   copy (never to `src/`), and builds it. The patch logs each modelled step as an NDJSON line.
+   The step and its log line happen inside one global trace lock, so the log order is the order
+   in which the steps took effect.
+2. `trace_audio` / `trace_events` run the race workloads of `repro/f020` and `repro/f019`.
+3. `trace2tla.py` maps each line to a model action: one model looker per lookup that found the
+   device, one model producer per push. It refuses any line it has no mapping for.
+4. TLC replays each trace in `tla/<spec>/Trace.tla`, with deadlock checking off. A trace passes
+   if some behavior of the model takes exactly the logged steps, with the logged values. Each
+   `trace/mutants/*.cfg` (the pre-fix model) must fail to replay the first trace.
+
+What this trusts:
+- the trace lock does not hide interleavings that matter. It serializes the logged steps,
+  which only removes interleavings, so every log is still a real run.
+- the patch's log points sit where the model's steps are.
+
+What the log cannot show: the native event count, and why a backend wait returned. TLC infers
+the first. For the second, either model step may match. Results on 2026-11-05: audio, 30 of 30
+device lifetimes (60 of the lookups in them hit a device whose count was already 0). Events,
+one 300-round run of 2,662 steps. Both pre-fix mutants were rejected.
+
+## Reproductions (`repro/`)
+
+`mise run repro:verify` builds 21 standalone programs against `cb6224d2e` and the current tree
+(Apple clang 21.0.0, ASan + UBSan, static SDL) and checks each outcome against
+`repro/EXPECT`. The races (`f019`–`f021`) are stress tests. A clean run on the fixed tree is
+evidence, not proof.
 
 ## Lean models
 

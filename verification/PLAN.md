@@ -37,8 +37,10 @@ costly:
 ## Ground rules
 
 - **Fork only.** Upstream policy forbids AI-generated contributions (RESEARCH §8). Nothing here
-  goes upstream. A finding goes upstream only if a human reproduces it on a real build and
-  writes the report or fix in their own words.
+  goes upstream.
+- **Reproduction is automated (since 2026-11-05).** There is no manual reproduction step. Each
+  finding gets a standalone program in `repro/` and an `EXPECT` line, and `mise run
+  repro:verify` shows it on the pre-fix tree and checks that it is gone on the current one.
 - **Fork policy (since 2026-11-05): the fork fixes its own bugs.** `bgyss/SDL` is an independent,
   agent-driven test bed (see CLAUDE.md), so findings are fixed in `src/`. A fix:
   - is its own commit, citing the finding ID
@@ -98,14 +100,16 @@ in parallel.
 - [x] Tooling reproduction: `mise run repro` reproduces all three leads on a real ASan build.
   The gamepad lead turned out to be live only on the 128-character joystick side; the
   20-character game-button side is latent. See F-004, F-005 and F-006.
-- [ ] **Human step.** (Kit ready: `HUMAN_REPRO.md` has short standalone programs for each,
-  with expected ASan output, all checked on 2026-11-05. The step itself is still yours.)
-  Reproduce the three leads from RESEARCH §10 on a real sanitizer build:
-  - the `SDL_StepUTF8(…, NULL)` over-read
-  - `StepUTF8` accepting codepoints above U+10FFFF
-  - the unterminated buffer for a 20-character gamepad mapping element name
+- [x] Independent reproduction (replaces the planned human step, 2026-11-05): `repro/` has a
+  standalone public-API program per finding. They share no code with the harness, and
+  `repro/run.sh` builds them against the pre-fix tree and the fixed tree. All three leads from
+  RESEARCH §10 reproduce on `cb6224d2e` and are gone after the fix:
+  - the `SDL_StepUTF8(…, NULL)` over-read (F-004)
+  - `StepUTF8` accepting code points above U+10FFFF (F-005)
+  - the gamepad mapping buffer (F-006; live on the 128-character joystick side)
 
-  Record the results in `FINDINGS.md`. Decide personally whether to report any of them upstream.
+  So do F-007 – F-021, including the two audio use-after-free races, which had only model
+  counterexamples before.
 - [ ] Settle RESEARCH open question 3: find where SDL documents its threading contracts for
   `SDL_Quit*` and for event and audio calls. The specs encode those contracts, not guesses.
 
@@ -178,7 +182,7 @@ Earlier status (2026-11-04), for the record:
   Phase 0, are listed explicitly in `FINDINGS.md`, never silenced in the harness.
 
 **Exit:** the theorems check with no `sorry` and pass the axioms check. The differential run is
-clean except for documented, human-triaged disagreements.
+clean except for documented disagreements, each tied to a finding.
 
 ### Phase 3: Fuzz harnesses as specs (the article's "tests to specs" step)
 
@@ -198,8 +202,8 @@ reproducible. utf8 and iconv have run more than 10M inputs each with nothing new
 - [x] Seed the corpora from `test/` resources and `testautomation_*` cases (`seedgen.c`, plus
   `test/sample.wav` and `test/sword.wav` heads; `test/` has no BMPs any more, so BMP seeds are
   generated, including RLE4/RLE8/1-bit/4-bit).
-- [x] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets human
-  triage, and gets a regression input. (Tooling triage done; human triage open.)
+- [x] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets triaged,
+  gets a regression input, and gets a standalone program in `repro/`.
 - [x] Write down the "no crash, hang or sanitizer report for inputs ≤ N bytes" property for each
   target (TRUSTED_BASE.md, "Fuzz properties"). That property is the spec a later binary-level
   proof (Phase 6) would discharge.
@@ -209,14 +213,17 @@ committed (or stored) with sizes recorded.
 
 ### Phase 4: The high-value TLA+ targets, with trace validation
 
-**Status (2026-11-05): both models are done; trace validation is not.**
+**Status (2026-11-05): done.**
 - `tla/events_wait` confirmed L-4 as F-019 with an 8-state counterexample. A stress program
-  then reproduced it on the real macOS build (`mise run repro:wakeup`).
+  then reproduced it on the real macOS build (`repro/f019_lost_wakeup`).
 - `tla/audio_device` confirmed L-5 as F-020 (12 states), and showed that the obvious fix is
-  not enough.
-- Both have passing real-code and model-fix configs, and four or three mutants each.
-- Trace validation (`instrument/`, `Trace.tla`) is still open. For F-019, the stress repro
-  stands in as the link to the real code. F-020 has no real-code link yet.
+  not enough. `repro/f020_audio_lookup_uaf` reproduces it under ASan, and F-021 is the same
+  window in a second lookup function.
+- Both have passing pre-fix and current-code configs, and four or three mutants each.
+- Trace validation works for both specs (`mise run trace`, TRUSTED_BASE.md "Trace
+  validation"). Real runs of the fixed code replay in each model, and the pre-fix model can't
+  replay them. It found one gap: the events model lacked `SDL_WaitEventTimeoutNS`'s entry
+  check. The model now has it.
 
 - [x] **Read before modeling.** (Cocoa, X11, Win32 latch the wakeup and none re-checks SDL's
   queue; Wayland not read. See TRUSTED_BASE.md, Abstractions.) Check whether the Cocoa, X11, Wayland and Win32
@@ -229,11 +236,15 @@ committed (or stored) with sizes recorded.
   (`src/audio/SDL_audio.c:481`). Check that a device is never freed while it is between lookup
   (`:493`) and taking its reference, given the other references that exist in practice (open
   question 2).
-- [ ] **Trace validation** (Cirstea, Kuppe, Loillier and Merz 2024):
-  - Add `VERIF_TRACE` NDJSON logging in `instrument/`.
-  - Run real SDL test programs (`testautomation`, `testaudiohotplug`, event stress) with it.
-  - Check the traces with a `Trace.tla` per spec.
-  - This connects each model to the real code.
+- [x] **Trace validation** (Cirstea, Kuppe, Loillier and Merz 2024):
+  - NDJSON trace hooks (`instrument/verif_trace.h`) are applied as a patch to an exported copy
+    of the tree (`instrument/*.patch`, `build.sh`). This replaces the planned CMake option, so
+    `src/` never contains them.
+  - The workloads are the F-019 and F-020 race programs (`trace_events.c`, `trace_audio.c`),
+    not `testautomation`/`testaudiohotplug`. They drive exactly the modelled paths, and
+    `testaudiohotplug` needs hardware that hotplugs.
+  - Each spec's `Trace.tla` checks the traces, and a mutant config (the pre-fix model) must
+    fail to replay them.
 
 **Exit:** both specs check with stated bounds, and each has mutants. At least one real trace per
 spec validates. Each hypothesis is marked confirmed (with a counterexample trace) or refuted
@@ -269,8 +280,8 @@ go/no-go write-up.
 
 ## Open decisions for the user
 
-1. Whether any confirmed finding is reported upstream, and by whom (RESEARCH §8, open question 7).
-   (The fork fixes them itself either way; see "Fork policy".)
+1. (Settled 2026-11-05: nothing goes upstream, and there is no manual reproduction step. The
+   fork fixes its findings itself; see "Fork policy".)
 2. Whether to add Apalache for symbolic checking with larger bounds than TLC can handle. It
    isn't in nixpkgs as far as checked, so it would need a pinned fetch in the flake.
 3. Whether Phase 6 is in scope at all.

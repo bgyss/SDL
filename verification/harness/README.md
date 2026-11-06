@@ -9,6 +9,11 @@ Nothing here changes `src/` or the upstream CMake files.
 
 ## Reproductions
 
+The reproduction suite of record is `../repro/` (`mise run repro:verify`). It covers every
+finding, builds against both the pre-fix tree and the current tree, and checks expected
+outcomes. The programs below are the earlier exploratory versions, kept for poking at one
+case on `build-asan`.
+
 | Command | What |
 |---|---|
 | `mise run repro` | builds `build-asan` (ASan + UBSan) and runs every `repro_leads` mode: F-004 (direct and via `SDL_strcasecmp`), F-005, F-006, F-009, F-013 |
@@ -80,3 +85,19 @@ because the string SDL parses goes through several rewrites: trimming, the `crc:
 `CreateMappingString` cutting at a second `platform:`. Mirroring all of them exactly was not worth
 it for a bug about to be fixed. The F-009 fix makes the skip unnecessary. See the post-fix
 results below.
+
+### Results after the fixes (2026-11-05, this branch)
+
+One 300-second run per target with `SDL_FUZZ_KNOWN=1`, so no known-finding skip and no UBSan
+suppression is active: the fixed code runs with nothing hidden. Same machine as above.
+
+| Target | Inputs executed | Result |
+|---|---|---|
+| `fuzz_utf8` | 2.20M | clean |
+| `fuzz_iconv` | 2.72M | clean |
+| `fuzz_rect` | 3.66M | clean |
+| `fuzz_gamepad` | 360k, then **F-022** (new: `axes[-1]`). After the F-022 fix, a second run: 527k clean | F-022, fixed |
+| `fuzz_bmp` | 13.7k, then a 10 s timeout on an 822-megapixel header (O-1). A second run: 34k clean | O-1 only |
+| `fuzz_wav` | 1.11M | clean |
+
+`mise run fuzz:regress`: all 21 regression inputs, F-022's included, pass with no skips.

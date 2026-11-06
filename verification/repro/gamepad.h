@@ -18,6 +18,7 @@ static int open_virtual_gamepad_with(const char *body)
     SDL_INIT_INTERFACE(&desc);
     desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
     desc.nbuttons = 4;
+    desc.naxes = 2; /* so joystick->axes is a real allocation (F-022 indexes it) */
     desc.name = "repro pad";
     const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
     if (!id) {
