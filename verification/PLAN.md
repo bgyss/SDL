@@ -90,7 +90,9 @@ in parallel.
 - [x] Tooling reproduction: `mise run repro` reproduces all three leads on a real ASan build.
   The gamepad lead turned out to be live only on the 128-character joystick side; the
   20-character game-button side is latent. See F-004, F-005 and F-006.
-- [ ] **Human step.** Reproduce the three leads from RESEARCH §10 on a real sanitizer build:
+- [ ] **Human step.** (Kit ready: `HUMAN_REPRO.md` has short standalone programs for each,
+  with expected ASan output, all checked on 2026-11-05. The step itself is still yours.)
+  Reproduce the three leads from RESEARCH §10 on a real sanitizer build:
   - the `SDL_StepUTF8(…, NULL)` over-read
   - `StepUTF8` accepting codepoints above U+10FFFF
   - the unterminated buffer for a 20-character gamepad mapping element name
@@ -136,7 +138,12 @@ in `FINDINGS.md`.
 
 ### Phase 2: Lean pilot (UTF-8)
 
-**Status (2026-11-04): forward decoding is done, the rest is open.**
+**Status (2026-11-05): done.** StepBack, utf8strlcpy and the encoder were added on 2026-11-05
+(`Utf8Encode.lean`, `Utf8String.lean`, 56 theorems). They found F-007 and F-008. `mise run lean`
+checks 12 proof mutants. `mise run lean:diff` adds a corpus differential: the new string-level
+models against the real C on the fuzz_utf8 corpora.
+
+Earlier status (2026-11-04), for the record:
 - `SDLVerif/Utf8.lean` has 12 theorems about `StepUTF8`. They cover bounds, progress, end of
   string, RFC 3629 completeness and soundness, and an exact characterization of the out-of-range
   bug. They also cover a model fix with a patch audit.
@@ -144,19 +151,19 @@ in `FINDINGS.md`.
 - `mise run lean:diff` compares against the real C on 3,096,576 cases: every lead byte, times
   12 boundary values for each continuation byte, times `slen` 0–5 and `NULL`. That is a
   boundary grid, not all 2^32 sequences. All cases agree.
-- Not done yet: `SDL_StepBackUTF8`, `SDL_utf8strlcpy`, and an encoder with round-trip proofs.
+- (Done 2026-11-05) `SDL_StepBackUTF8`, `SDL_utf8strlcpy`, and an encoder with round-trip proofs.
 - Findings: F-004 and F-005, plus F-006 from the Phase 0 reproduction.
 
 - [x] Create the `lean/` lake project with a `lean-toolchain` file. Add Mathlib only if a proof
   needs it, because it is expensive to build.
-- [ ] `SDLVerif/Utf8.lean` (forward step done; StepBack, utf8strlcpy and the encoder open):
+- [x] `SDLVerif/Utf8.lean`, `Utf8Encode.lean`, `Utf8String.lean`:
   - Write an executable RFC 3629 decoder model.
   - Write a model of SDL's documented `SDL_StepUTF8` / `SDL_StepBackUTF8` / `SDL_utf8strlcpy`
     contract, taken from `include/SDL3/SDL_stdinc.h`.
   - Prove that the model accepts exactly the well-formed sequences, never reads past
     `slen`/NUL, round-trips with an encoder, and that `StepBack` inverts `Step`.
   - Use `bv_decide` / `decide` for the byte-level lemmas.
-- [x] (boundary grid; the fuzzer-generated longer strings wait for Phase 3)
+- [x] (boundary grid, plus the fuzz_utf8 corpora since 2026-11-05: `test/utf8_corpus.sh`)
   `lean/test/utf8_diff.c` plus `lean/test/`: run SDL's C and the Lean executable on the same
   inputs: exhaustive over all ≤4-byte sequences plus fuzzer-generated longer strings. Report
   every disagreement. Expected disagreements, such as codepoints above U+10FFFF if confirmed in
@@ -167,30 +174,50 @@ clean except for documented, human-triaged disagreements.
 
 ### Phase 3: Fuzz harnesses as specs (the article's "tests to specs" step)
 
-- [ ] Add libFuzzer targets in `verification/harness/`, built with a fork-only CMake option, for:
+**Status (2026-11-05): done for this round.** Six targets are in `harness/` (README.md there),
+built by `mise run fuzz:build` with no CMake or `src/` changes. Five 5-minute runs per target
+found F-009 to F-018. The targets stop again only when they hit something new: each known
+finding is skipped on its own trigger set, and `mise run fuzz:regress` keeps each one
+reproducible. utf8 and iconv have run more than 10M inputs each with nothing new.
+
+- [x] Add libFuzzer targets in `verification/harness/` (built by `harness/fuzz.sh` rather than
+  a CMake option, so no CMake file changes), for:
   - `SDL_StepUTF8` / `SDL_iconv`
   - integer rect functions
   - `SDL_AddGamepadMapping`
   - `SDL_LoadBMP_IO`
   - `SDL_LoadWAV_IO`
-- [ ] Seed the corpora from `test/` resources and `testautomation_*` cases.
-- [ ] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets human
-  triage, and gets a regression input.
-- [ ] Write down the "no crash, hang or sanitizer report for inputs ≤ N bytes" property for each
-  target. That property is the spec a later binary-level proof (Phase 6) would discharge.
+- [x] Seed the corpora from `test/` resources and `testautomation_*` cases (`seedgen.c`, plus
+  `test/sample.wav` and `test/sword.wav` heads; `test/` has no BMPs any more, so BMP seeds are
+  generated, including RLE4/RLE8/1-bit/4-bit).
+- [x] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets human
+  triage, and gets a regression input. (Tooling triage done; human triage open.)
+- [x] Write down the "no crash, hang or sanitizer report for inputs ≤ N bytes" property for each
+  target (TRUSTED_BASE.md, "Fuzz properties"). That property is the spec a later binary-level
+  proof (Phase 6) would discharge.
 
 **Exit:** all five targets run for a fixed budget with no untriaged crashes, and the corpora are
 committed (or stored) with sizes recorded.
 
 ### Phase 4: The high-value TLA+ targets, with trace validation
 
-- [ ] **Read before modeling.** Check whether the Cocoa, X11, Wayland and Win32
+**Status (2026-11-05): both models are done; trace validation is not.**
+- `tla/events_wait` confirmed L-4 as F-019 with an 8-state counterexample. A stress program
+  then reproduced it on the real macOS build (`mise run repro:wakeup`).
+- `tla/audio_device` confirmed L-5 as F-020 (12 states), and showed that the obvious fix is
+  not enough.
+- Both have passing real-code and model-fix configs, and four or three mutants each.
+- Trace validation (`instrument/`, `Trace.tla`) is still open. For F-019, the stress repro
+  stands in as the link to the real code. F-020 has no real-code link yet.
+
+- [x] **Read before modeling.** (Cocoa, X11, Win32 latch the wakeup and none re-checks SDL's
+  queue; Wayland not read. See TRUSTED_BASE.md, Abstractions.) Check whether the Cocoa, X11, Wayland and Win32
   `WaitEventTimeout` backends latch a wakeup that is posted before the wait begins (RESEARCH
   open question 1). That answer decides how the backend is abstracted.
-- [ ] `tla/events_wait/`: model `SDL_WaitEventTimeout_Device` (`src/events/SDL_events.c:1631`),
+- [x] `tla/events_wait/`: model `SDL_WaitEventTimeout_Device` (`src/events/SDL_events.c:1631`),
   `SDL_SendWakeupEvent` and the queue lock. Check that there is no lost wakeup when an event is
   pushed between the queue check (`:1646`) and setting `wakeup_window` (`:1671`).
-- [ ] `tla/audio_device/`: model device lookup, refcounting and disconnect
+- [x] `tla/audio_device/`: model device lookup, refcounting and disconnect
   (`src/audio/SDL_audio.c:481`). Check that a device is never freed while it is between lookup
   (`:493`) and taking its reference, given the other references that exist in practice (open
   question 2).

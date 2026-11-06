@@ -8,6 +8,11 @@
  *   repro_leads gamepad-joy L-3b: a 128-character joystick binding is left unterminated and
  *                           then passed to SDL_strlen
  *
+ *   repro_leads utf8-strcasecmp  F-004 through SDL_strcasecmp
+ *   repro_leads gamepad-empty    F-009: empty joystick half reads szJoystickButton[-1]
+ *   repro_leads gamepad-sign     F-009 with a sign only (UB pointer arithmetic, no OOB read)
+ *   repro_leads mapping-empty    F-013: empty mapping body, CreateMappingString reads [-1]
+ *
  * Each mode exercises exactly one lead, so an ASan report can be attributed to it.
  */
 #include <SDL3/SDL.h>
@@ -27,6 +32,19 @@ static int utf8_null(void)
     const Uint32 cp = SDL_StepUTF8(&p, NULL); /* ASan: heap-buffer-overflow READ expected here */
     printf("utf8-null: cp=0x%X advanced=%d (no ASan report means L-1 did not reproduce)\n",
            (unsigned)cp, (int)(p - s));
+    free(s);
+    return 0;
+}
+
+/* F-004 through SDL_strcasecmp, which steps each string with StepUTF8(&str, 4)
+   (SDL_string.c:1494), the same assumption as the NULL-length path. */
+static int utf8_strcasecmp(void)
+{
+    char *s = (char *)malloc(2);
+    s[0] = (char)0xF0;
+    s[1] = '\0';
+    const int r = SDL_strcasecmp(s, "x"); /* ASan: heap-buffer-overflow READ expected here */
+    printf("utf8-strcasecmp: SDL_strcasecmp -> %d (no ASan report means it did not reproduce)\n", r);
     free(s);
     return 0;
 }
@@ -52,7 +70,7 @@ static int utf8_range(void)
     return bad ? 1 : 0;
 }
 
-static int gamepad(int joystick_side)
+static int gamepad(int joystick_side, const char *elements)
 {
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
         printf("gamepad: SDL_Init failed: %s\n", SDL_GetError());
@@ -72,7 +90,9 @@ static int gamepad(int joystick_side)
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), guid, sizeof(guid));
 
     char mapping[512];
-    if (!joystick_side) {
+    if (elements) {
+        SDL_snprintf(mapping, sizeof(mapping), "%s,repro,%s", guid, elements);
+    } else if (!joystick_side) {
         /* "abcdefghijklmnopqrst" is exactly 20 characters = sizeof(szGameButton). */
         SDL_snprintf(mapping, sizeof(mapping), "%s,repro,abcdefghijklmnopqrst:b0,a:b1,", guid);
     } else {
@@ -101,13 +121,43 @@ static int gamepad(int joystick_side)
     return 0;
 }
 
+/* Add a whole mapping string, then ask SDL to print it back (CreateMappingString). */
+static int mapping_raw(const char *mapping)
+{
+    if (!SDL_Init(SDL_INIT_GAMEPAD)) {
+        printf("mapping: SDL_Init failed: %s\n", SDL_GetError());
+        return 2;
+    }
+    char guidstr[33];
+    SDL_strlcpy(guidstr, mapping, sizeof(guidstr));
+    printf("mapping: adding \"%s\"\n", mapping);
+    const int rc = SDL_AddGamepadMapping(mapping);
+    printf("mapping: SDL_AddGamepadMapping -> %d %s\n", rc, rc < 0 ? SDL_GetError() : "");
+    char *back = SDL_GetGamepadMappingForGUID(SDL_StringToGUID(guidstr)); /* ASan report expected here for mapping-empty */
+    printf("mapping: SDL_GetGamepadMappingForGUID -> \"%s\"\n", back ? back : "(null)");
+    SDL_free(back);
+    SDL_Quit();
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *mode = argc > 1 ? argv[1] : "";
     if (strcmp(mode, "utf8-null") == 0) return utf8_null();
     if (strcmp(mode, "utf8-range") == 0) return utf8_range();
-    if (strcmp(mode, "gamepad") == 0) return gamepad(0);
-    if (strcmp(mode, "gamepad-joy") == 0) return gamepad(1);
-    fprintf(stderr, "usage: %s utf8-null|utf8-range|gamepad|gamepad-joy\n", argv[0]);
+    if (strcmp(mode, "utf8-strcasecmp") == 0) return utf8_strcasecmp();
+    if (strcmp(mode, "gamepad") == 0) return gamepad(0, NULL);
+    if (strcmp(mode, "gamepad-joy") == 0) return gamepad(1, NULL);
+    /* F-009: an empty joystick half ("a:,") makes SDL_PrivateParseGamepadElement read
+       szJoystickButton[-1]; "a:+," does the same pointer arithmetic but stays in the array. */
+    if (strcmp(mode, "gamepad-empty") == 0) return gamepad(0, "a:,");
+    if (strcmp(mode, "gamepad-sign") == 0) return gamepad(0, "a:+,");
+    if (strcmp(mode, "gamepad-elements") == 0 && argc > 2) return gamepad(0, argv[2]);
+    if (strcmp(mode, "mapping-raw") == 0 && argc > 2) return mapping_raw(argv[2]);
+    /* F-013: a mapping with nothing after "guid,name," is stored as "", and
+       CreateMappingString reads mapping[strlen - 1] = mapping[-1]. */
+    if (strcmp(mode, "mapping-empty") == 0) return mapping_raw("05000000aabbccdd0000000000000000,repro,");
+    fprintf(stderr, "usage: %s utf8-null|utf8-range|utf8-strcasecmp|gamepad|gamepad-joy|gamepad-empty|gamepad-sign|"
+                    "gamepad-elements <elements>|mapping-raw <mapping>|mapping-empty\n", argv[0]);
     return 2;
 }
