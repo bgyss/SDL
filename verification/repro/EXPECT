@@ -30,3 +30,5 @@ f019_lost_wakeup      F-019  bug                                                
 f020_audio_lookup_uaf F-020  asan:heap-use-after-free|attempting@SDL_GetAudioDeviceFormat ok
 f021_audio_find_by_handle F-021 asan:heap-use-after-free|attempting@backend_device_removed ok
 f022_gamepad_axis_overflow F-022 asan:heap-buffer-overflow@SDL_PrivateLoadButtonMapping ok
+f023_bmp_size_overflow F-023 ubsan:signed_integer_overflow@SDL_bmp.c                 ok
+f024_surface_pitch_overflow F-024 bug                                                ok

@@ -94,18 +94,18 @@ lake build -q > "$log" 2>&1 || { grep -v "ld64.lld: warning" "$log"; exit 1; }
 echo "proofs:  all theorems check"
 # Only the standard axioms and bv_decide's natively checked LRAT certificates are allowed.
 lake env lean test/Axioms.lean > "$log" 2>&1
-bad=$(tr ',[]' '\n\n\n' < "$log" | sed 's/^ *//' | grep -vE "depends on axioms:|^$|^propext$|^Classical\.choice$|^Quot\.sound$|\._native\.bv_decide\.ax_" || true)
+bad=$(tr ',[]' '\n\n\n' < "$log" | sed 's/^ *//' | grep -vE "depends on axioms:|does not depend on any axioms$|^$|^propext$|^Classical\.choice$|^Quot\.sound$|\._native\.bv_decide\.ax_" || true)
 if [ -n "$bad" ]; then echo "axioms:  UNEXPECTED: $bad"; exit 1; fi
-echo "axioms:  $(grep -c 'depends on axioms' "$log") theorems, no sorry, only standard + bv_decide certificate axioms"
+echo "axioms:  $(grep -cE 'depends on axioms|does not depend on any axioms' "$log") theorems, no sorry, only standard + bv_decide certificate axioms"
 echo "mutants:"
 test/mutants.sh
 '''
 
 [tasks."lean:diff"]
-description = "Differential tests of the Lean models against the real SDL build (boundary grid + fuzz corpus)"
+description = "Differential tests of the Lean models against the real SDL build (UTF-8 grid + fuzz corpus, rect functions)"
 depends = ["build"]
 dir = "verification/lean"
-run = "test/utf8_diff.sh ../../build && test/utf8_corpus.sh ../../build"
+run = "test/utf8_diff.sh ../../build && test/utf8_corpus.sh ../../build && test/rect_diff.sh ../../build 200000"
 
 # Sanitizer builds use Apple's clang: on macOS 27 the nix clang 21 ASan runtime hangs at
 # startup, even for a plain hello world. Inside the dev shell, /usr/bin/clang is an xcrun shim

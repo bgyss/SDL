@@ -123,6 +123,13 @@ bool SDL_CalculateSurfaceSize(SDL_PixelFormat format, int width, int height, siz
         }
     }
 
+    /* SDL_Surface::pitch is an int, and SDL computes `h * pitch` and offsets within the pixels
+       in int all over (blits, RLE, cursors, image loaders). A larger pitch was truncated into a
+       negative one, and a larger total wrapped those products (bgyss/SDL F-023, F-024). */
+    if (p > SDL_MAX_SINT32 || sz > SDL_MAX_SINT32) {
+        return SDL_SetError("Surface too large (pitch or size above %d bytes)", SDL_MAX_SINT32);
+    }
+
     if (size) {
         *size = sz;
     }
@@ -300,6 +307,12 @@ SDL_Surface *SDL_CreateSurfaceFrom(int width, int height, SDL_PixelFormat format
 
         CHECK_PARAM(pitch < 0 || (size_t)pitch < minimalPitch) {
             SDL_InvalidParamError("pitch");
+            return NULL;
+        }
+
+        // The whole surface must fit in an int, like a surface SDL allocates (bgyss/SDL F-023).
+        if ((Uint64)height * (Uint64)pitch > SDL_MAX_SINT32) {
+            SDL_SetError("Surface too large (height * pitch above %d bytes)", SDL_MAX_SINT32);
             return NULL;
         }
     }

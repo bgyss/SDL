@@ -1390,6 +1390,59 @@ static int SDLCALL surface_testBlitsWithBadCoordinates(void *arg)
     return TEST_COMPLETED;
 }
 
+/**
+ * A surface's pitch and its total size (height * pitch) must fit in an int: SDL stores the pitch
+ * as an int and computes `h * pitch` in int in many places (bgyss/SDL F-023, F-024). These cases
+ * do not allocate large buffers: the large ones are rejected before any allocation, and the
+ * CreateSurfaceFrom ones use a dummy pixel pointer.
+ */
+static int SDLCALL surface_testIntSize(void *arg)
+{
+    char buf[16];
+    SDL_Surface *surface;
+
+    /* 2^29 pixels * 4 bytes = a 2^31-byte pitch, which used to become INT_MIN */
+    surface = SDL_CreateSurface(536870912, 1, SDL_PIXELFORMAT_ARGB8888);
+    SDLTest_AssertCheck(surface == NULL, "A pitch above INT_MAX is rejected");
+    SDL_DestroySurface(surface);
+
+    /* 2 rows of 2^30 bytes = 2^31 bytes in all */
+    surface = SDL_CreateSurfaceFrom(1, 2, SDL_PIXELFORMAT_INDEX8, buf, 1073741824);
+    SDLTest_AssertCheck(surface == NULL, "height * pitch above INT_MAX is rejected");
+    SDL_DestroySurface(surface);
+
+    /* Exactly fitting cases are still allowed */
+    surface = SDL_CreateSurfaceFrom(1, 1, SDL_PIXELFORMAT_INDEX8, buf, SDL_MAX_SINT32);
+    SDLTest_AssertCheck(surface != NULL, "height * pitch == INT_MAX is allowed: %s",
+                        surface ? "(success)" : SDL_GetError());
+    SDL_DestroySurface(surface);
+    surface = SDL_CreateSurfaceFrom(1, 2, SDL_PIXELFORMAT_INDEX8, buf, 1073741823);
+    SDLTest_AssertCheck(surface != NULL, "2 * (2^30 - 1) is allowed: %s",
+                        surface ? "(success)" : SDL_GetError());
+    SDL_DestroySurface(surface);
+
+    /* A BMP whose pixels would take 2^31 bytes (1048576 x 512 at 32 bpp) is refused up front.
+       The old loader computed h * pitch in int and returned uninitialized pixels. */
+    {
+        Uint8 bmp[54];
+        SDL_zeroa(bmp);
+        bmp[0] = 'B';
+        bmp[1] = 'M';
+        bmp[10] = 54;            /* bfOffBits */
+        bmp[14] = 40;            /* biSize */
+        bmp[20] = 0x10;          /* biWidth = 0x00100000 */
+        bmp[22] = 0x00;          /* biHeight = 0x00000200 */
+        bmp[23] = 0x02;
+        bmp[26] = 1;             /* biPlanes */
+        bmp[28] = 32;            /* biBitCount */
+        surface = SDL_LoadBMP_IO(SDL_IOFromConstMem(bmp, sizeof(bmp)), true);
+        SDLTest_AssertCheck(surface == NULL, "A 2 GiB BMP is refused: %s", surface ? "(loaded)" : SDL_GetError());
+        SDL_DestroySurface(surface);
+    }
+
+    return TEST_COMPLETED;
+}
+
 static int SDLCALL surface_testOverflow(void *arg)
 {
     char buf[1024];
@@ -2232,6 +2285,10 @@ static const SDLTest_TestCaseReference surfaceTestOverflow = {
     surface_testOverflow, "surface_testOverflow", "Test overflow detection.", TEST_ENABLED
 };
 
+static const SDLTest_TestCaseReference surfaceTestIntSize = {
+    surface_testIntSize, "surface_testIntSize", "Test that pitch and height * pitch fit in an int (F-023, F-024).", TEST_ENABLED
+};
+
 static const SDLTest_TestCaseReference surfaceTestSetGetClipRect = {
     surface_testSetGetSurfaceClipRect, "surface_testSetGetSurfaceClipRect", "Test SDL_(Set|Get)SurfaceClipRect.", TEST_ENABLED
 };
@@ -2290,6 +2347,7 @@ static const SDLTest_TestCaseReference *surfaceTests[] = {
     &surfaceTestBlitInvalid,
     &surfaceTestBlitsWithBadCoordinates,
     &surfaceTestOverflow,
+    &surfaceTestIntSize,
     &surfaceTestSetGetClipRect,
     &surfaceTestFlip,
     &surfaceTestPalette,

@@ -14,17 +14,20 @@ Status values:
   fuzz regression input (if any) passes with `SDL_FUZZ_KNOWN=1`.
 
 The 2026-11-05 run of `mise run repro:verify` (Apple M-series, macOS 27.3, Apple clang 21.0.0;
-base `cb6224d2e`, fixed = this branch) matched `EXPECT` for all 21 programs on both trees.
+base `cb6224d2e`, fixed = this branch) matched `EXPECT` for all 21 programs on both trees. F-023 and F-024 (2026-11-06) added two
+more; the current suite has 23.
 
 ---
 
-## Summary of F-004 – F-022 (2026-11-05)
+## Summary of F-004 – F-024 (2026-11-05, F-023/F-024 on 2026-11-06)
 
 Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-020 in
-`cce7d368b`, and F-021 and F-022 each in the commit that added it.
+`cce7d368b`, and F-021 – F-024 each in their own commit.
 
 | ID | Where | What | Reproduction on `cb6224d2e` (`repro/`) | Severity |
 |---|---|---|---|---|
+| F-024 | `SDL_CreateSurface` | pitch above INT_MAX stored as a negative `int` | `f024_surface_pitch_overflow`: pitch -2147483648 | moderate |
+| F-023 | `SDL_LoadBMP_IO` (and every `int` `h * pitch`) | surfaces ≥ 2 GiB overflow `h * pitch`; the load "succeeds" with uninitialized pixels | `f023_bmp_size_overflow`: UBSan signed overflow | moderate |
 | F-022 | `SDL_PrivateParseGamepadElement` / `SDL_PrivateLoadButtonMapping`, joystick getters | mapping index too large for an int becomes -1; `axes[-1]` read and written | `f022_gamepad_axis_overflow`: ASan heap-buffer-overflow | low–moderate |
 | F-021 | `SDL_FindPhysicalAudioDeviceByCallback`/`ByHandle` callers | backend find-then-disconnect races with the last unref: use after free | `f021_audio_find_by_handle`: ASan heap-use-after-free | moderate (UAF on hotplug) |
 | F-020 | `ObtainPhysicalAudioDevice` | lookup by ID races with the last unref: use after free | `f020_audio_lookup_uaf`: ASan heap-use-after-free; model counterexample | moderate (UAF) |
@@ -43,6 +46,98 @@ Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-
 | F-017, F-018 | `SDL_LoadBMP_IO` | RLE row pointer leaves the buffer (UB); `-INT_MIN` height (UB) | `f017_bmp_rle`, `f018_bmp_int_min`: UBSan | low |
 
 F-004 also gained reach: `SDL_strcasecmp` and `SDL_utf8strlen` hit the same over-read (see F-004).
+
+## F-024 · Surfaces: a pitch above INT_MAX was stored as a negative `int`
+
+**Status:** reproduced and fixed. Found while stating the BMP header theorems (Phase 5).
+Severity: moderate. It needs a surface at least 2^31 bytes wide, but it is reachable from the
+public API and from every image loader.
+
+**Code:** `SDL_CreateSurface` computes the pitch in `size_t` (`SDL_CalculateRGBSize`) and stores
+it as `(int)pitch` with no range check (`SDL_surface.c:226` at `cb6224d2e`). A 536,870,912 × 1
+ARGB8888 surface gets `pitch == INT_MIN` over a 2 GiB buffer, and every blit, fill and loader
+trusts that pitch.
+
+**Reproduction:** `repro/f024_surface_pitch_overflow`: on `cb6224d2e`, `BUG: surface created with
+pitch -2147483648 for a row of 2147483648 bytes`.
+
+**Fix:** `SDL_CalculateSurfaceSize` rejects a pitch above `INT_MAX` ("Surface too large"). Test:
+`testautomation` `surface_testIntSize`. Model: `pitch_prefix_overflow` in `lean/SDLVerif/Header.lean`.
+
+## F-023 · BMP: `surface->h * surface->pitch` in `int` overflows for surfaces of 2 GiB or more
+
+**Status:** reproduced and fixed. Found by trying to prove that the BMP loader's buffer
+arithmetic cannot overflow (Phase 5). Severity: moderate. The input is a 54-byte header plus one
+row (4 MiB). The load then "succeeds" with 2 GiB of uninitialized memory as its pixels.
+
+**Code:** nothing limited `h * pitch` to an `int`. `SDL_CreateSurface` checked only `size_t`
+overflow, and SDL computes `h * pitch` in `int` in many places (85 such expressions in
+`src/video`, including RLE acceleration, cursors and icons). `SDL_LoadBMP_IO` sets
+`end = pixels + surface->h * surface->pitch` (`SDL_bmp.c:525` at `cb6224d2e`). For a 1,048,576 × 512
+32-bpp image that is `512 * 4194304 = 2^31`: signed overflow. In an unsanitized build it wraps
+to `INT_MIN`, `end` falls before `pixels`, the row loop never runs, and the function returns
+success with a 2 GiB surface whose pixels were never read from the file.
+
+**Reproduction:** `repro/f023_bmp_size_overflow`: on `cb6224d2e`, UBSan reports `signed integer
+overflow: 512 * 4194304 cannot be represented in type 'int'` in `SDL_bmp.c`. In a plain build
+the same program prints `OK: loaded`, from a file with one row of pixels.
+
+**Fix:**
+- `SDL_CalculateSurfaceSize` rejects a total size above `INT_MAX`.
+- `SDL_CreateSurfaceFrom` rejects a caller pitch with `height * pitch > INT_MAX`.
+- The BMP loader computes its end-of-pixels pointers in `size_t`.
+
+This is a public behavior change: surfaces of 2 GiB or more can no longer be created. They
+were unsafe before (see the 85 sites above). It is documented on `SDL_CreateSurface` and
+`SDL_CreateSurfaceFrom`. Test: `testautomation` `surface_testIntSize`.
+
+**Model:** `lean/SDLVerif/Header.lean`.
+- `bmp_rows_in_buffer`: on a surface that passes the new check, the `int` product is exact and
+  every row the loader reads is inside the buffer.
+- `bmp_prefix_overflow`: the old code admitted this case.
+- `height_times_pitch_can_exceed_size_t`: SDL's existing `size_t` check on `height * pitch` is
+  needed too, not redundant.
+
+## Observation O-2 · The BMP row loop forms a pointer before the buffer
+
+A bottom-up BMP (the usual kind) is read from the last row up with `bits -= pitch`. After row 0
+the loop computes `top - pitch` and only then sees `bits < top`. Forming a pointer outside the
+array is undefined in C even if it is never dereferenced. It is the same class as F-017, but no
+sanitizer can observe it (UBSan's pointer-overflow check only fires when the address wraps).
+Following this fork's rule that a fix needs a reproduction, it is recorded here and not
+changed. A row-index loop, as F-017's fix did for RLE, would remove it.
+
+## R-1 · The integer rect functions are free of undefined behavior and compute what they claim (Lean)
+
+**Status:** proved (all inputs, no bounds) in `lean/SDLVerif/Rect.lean` and
+`lean/SDLVerif/RectLine.lean`, for the code since `cce7d368b`. The model is tied to the real C
+by `test/rect_diff.sh`: 200,000 cases, the outputs match exactly. 9 proof mutants are all caught.
+
+- **No signed overflow anywhere** (`has_no_ub`, `inter_no_ub`, `union_no_ub`, `enclose_noclip`,
+  `enclose_clip`, and for line clipping `step_ok`/`loop_ok`/`rect_box_ok`). This covers every
+  `int` `+`/`-`, and for line clipping every `Sint64` product (each below 2^62 in magnitude).
+- **Line clipping never divides by zero, and always terminates.** The `SDL_assert(y2 != y1)`
+  and `SDL_assert(x2 != x1)` in the Cohen–Sutherland loop can never fire. A zero divisor would
+  need both outcodes to share a bit, which the loop exits on first. Every clipped point lands
+  inside the segment's bounding box, so all coordinates stay within the endpoint guard. The loop
+  ends within `|x2-x1| + |y2-y1| + 1` iterations, and when it returns true both endpoints are
+  inside the rect.
+- **What the functions compute** on guarded inputs:
+  - The intersection is exact: `inter_sound` (its points are in both rects) and `inter_complete`
+    (every common point is in it). It is commutative (`inter_comm`) and agrees with
+    `SDL_HasRectIntersection` (`has_iff_inter`).
+  - The union contains both non-empty rects and is the tightest such rect (`union_contains`,
+    `union_tight`). It fails exactly when the result would be wider or taller than `INT_MAX`
+    (`union_fails_iff_too_wide`).
+  - The enclosing rect contains every point (inside the clip, if given) and lies inside the
+    clip.
+- **The record of F-012/F-014/F-015** (pre-fix model, `fixed := false`):
+  - `has_prefix_ub_only_unguarded`: the old `SDL_HasRectIntersection` overflowed only on inputs
+    the new guard rejects.
+  - `inter_prefix_ub_under_fixed_guard`: the old `SDL_GetRectIntersection` could overflow even on
+    rects that pass the *new* guard, which is why the fix also computes the size in 64 bits.
+  - `inter_fix_audit`, `union_fix_audit`: wherever the old code was defined and the new guard
+    accepts, the fixed functions return exactly what the old ones did.
 
 ## F-022 · Gamepad: a joystick index too large for an int indexes `axes[-1]`
 
