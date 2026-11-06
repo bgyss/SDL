@@ -69,9 +69,10 @@ static bool FindByDevIDCallback(void *userdata, SDL_AudioDevice *device)
     return false;
 }
 
-static SDL_AudioDevice *SDL_IMMDevice_FindByDevID(LPCWSTR devid)
+// The result holds a reference: release it with UnrefPhysicalAudioDevice (bgyss/SDL F-021).
+static SDL_AudioDevice *SDL_IMMDevice_FindAndRefByDevID(LPCWSTR devid)
 {
-    return SDL_FindPhysicalAudioDeviceByCallback(FindByDevIDCallback, (void *) devid);
+    return SDL_FindAndRefPhysicalAudioDeviceByCallback(FindByDevIDCallback, (void *) devid);
 }
 
 LPGUID SDL_IMMDevice_GetDirectSoundGUID(SDL_AudioDevice *device)
@@ -144,8 +145,9 @@ static SDL_AudioDevice *SDL_IMMDevice_Add(const bool recording, const char *devn
     }
 
     // see if we already have this one first.
-    SDL_AudioDevice *device = SDL_IMMDevice_FindByDevID(devid);
+    SDL_AudioDevice *device = SDL_IMMDevice_FindAndRefByDevID(devid);
     if (device) {
+        // The reference keeps a zombie alive while we look at it (bgyss/SDL F-021).
         if (SDL_GetAtomicInt(&device->zombie)) {
             // whoa, it came back! This can happen if you unplug and replug USB headphones while we're still keeping the SDL object alive.
             // Kill this device's IMMDevice id; the device will go away when the app closes it, or maybe a new default device is chosen
@@ -153,7 +155,13 @@ static SDL_AudioDevice *SDL_IMMDevice_Add(const bool recording, const char *devn
             SDL_IMMDevice_HandleData *handle = (SDL_IMMDevice_HandleData *) device->handle;
             SDL_free(handle->immdevice_id);
             handle->immdevice_id = NULL;
+            UnrefPhysicalAudioDevice(device);
             device = NULL;  // add a new device, below.
+        } else {
+            // A live device: the device list still holds a reference, so this one isn't the last.
+            // What we return holds no reference, as before; callers only use it while
+            // enumerating at startup.
+            UnrefPhysicalAudioDevice(device);
         }
     }
 
@@ -255,7 +263,10 @@ static ULONG STDMETHODCALLTYPE SDLMMNotificationClient_Release(IMMNotificationCl
 static HRESULT STDMETHODCALLTYPE SDLMMNotificationClient_OnDefaultDeviceChanged(IMMNotificationClient *iclient, EDataFlow flow, ERole role, LPCWSTR pwstrDeviceId)
 {
     if (role == SDL_IMMDevice_role) {
-        immcallbacks.default_audio_device_changed(SDL_IMMDevice_FindByDevID(pwstrDeviceId));
+        // Hold a reference across the callback (bgyss/SDL F-021).
+        SDL_AudioDevice *device = SDL_IMMDevice_FindAndRefByDevID(pwstrDeviceId);
+        immcallbacks.default_audio_device_changed(device);
+        UnrefPhysicalAudioDevice(device);
     }
     return S_OK;
 }
@@ -298,7 +309,10 @@ static HRESULT STDMETHODCALLTYPE SDLMMNotificationClient_OnDeviceStateChanged(IM
                     }
                     SDL_free(unique_id);
                 } else {
-                    immcallbacks.audio_device_disconnected(SDL_IMMDevice_FindByDevID(pwstrDeviceId));
+                    // Hold a reference across the callback (bgyss/SDL F-021).
+                    SDL_AudioDevice *sdldevice = SDL_IMMDevice_FindAndRefByDevID(pwstrDeviceId);
+                    immcallbacks.audio_device_disconnected(sdldevice);
+                    UnrefPhysicalAudioDevice(sdldevice);
                 }
             }
             IMMEndpoint_Release(endpoint);

@@ -93,6 +93,8 @@ bool SDL_GetSpanEnclosingRect(int width, int height,
 #define POINTTYPE                SDL_Point
 #define SCALARTYPE               int
 #define BIGSCALARTYPE            Sint64
+#define SCALARMIN                SDL_MIN_SINT32
+#define SCALARMAX                SDL_MAX_SINT32
 #define COMPUTEOUTCODE           ComputeOutCode
 #define ENCLOSEPOINTS_EPSILON    1
 #define SDL_RECT_CAN_OVERFLOW    SDL_RectCanOverflow
@@ -108,6 +110,8 @@ bool SDL_GetSpanEnclosingRect(int width, int height,
 #define POINTTYPE                SDL_FPoint
 #define SCALARTYPE               float
 #define BIGSCALARTYPE            double
+#define SCALARMIN                (-3.402823466e+38)
+#define SCALARMAX                3.402823466e+38
 #define COMPUTEOUTCODE           ComputeOutCodeFloat
 #define ENCLOSEPOINTS_EPSILON    0.0f
 #define SDL_RECT_CAN_OVERFLOW    SDL_RectCanOverflowFloat

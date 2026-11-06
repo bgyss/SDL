@@ -87,10 +87,21 @@ extern bool SDL_AudioDeviceFormatChanged(SDL_AudioDevice *device, const SDL_Audi
 extern bool SDL_AudioDeviceFormatChangedAlreadyLocked(SDL_AudioDevice *device, const SDL_AudioSpec *newspec, int new_sample_frames);
 
 // Find the SDL_AudioDevice associated with the handle supplied to SDL_AddAudioDevice. NULL if not found. DOES NOT LOCK THE DEVICE.
+// The result holds no reference, so a concurrent disconnect can free it at any time. Only compare
+// it against NULL, or use it where nothing can disconnect the device (DetectDevices). Otherwise
+// use SDL_FindAndRefPhysicalAudioDeviceByHandle.
 extern SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByHandle(void *handle);
 
 // Find an SDL_AudioDevice, selected by a callback. NULL if not found. DOES NOT LOCK THE DEVICE.
+// The callback runs under the subsystem read lock, so it may use the device. The result holds no
+// reference; see SDL_FindPhysicalAudioDeviceByHandle.
 extern SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata);
+
+// The same two searches, but the result holds a reference, taken under the same lock as the
+// search, so it stays valid until you release it with UnrefPhysicalAudioDevice (which accepts
+// NULL). A device whose last reference is already gone is not found. DOES NOT LOCK THE DEVICE.
+extern SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByHandle(void *handle);
+extern SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata);
 
 // Backends should call this if they change the device format, channels, freq, or sample_frames to keep other state correct.
 extern void SDL_UpdatedAudioDeviceFormat(SDL_AudioDevice *device);

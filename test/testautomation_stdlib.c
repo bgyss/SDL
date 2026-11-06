@@ -1477,7 +1477,81 @@ static int SDLCALL stdlib_strtod(void *arg)
     return TEST_COMPLETED;
 }
 
+/**
+ * UTF-8 stepping and copying (bgyss/SDL F-004, F-005, F-007, F-008; see
+ * verification/FINDINGS.md and the Lean proofs in verification/lean/SDLVerif/Utf8Fixed.lean).
+ */
+static int SDLCALL stdlib_utf8(void *arg)
+{
+    /* F-005: nothing above U+10FFFF decodes. */
+    {
+        static const char *const out_of_range[] = { "\xF4\x90\x80\x80", "\xF5\x80\x80\x80", "\xF7\xBF\xBF\xBF" };
+        for (int i = 0; i < (int)SDL_arraysize(out_of_range); i++) {
+            const char *p = out_of_range[i];
+            size_t len = 4;
+            const Uint32 cp = SDL_StepUTF8(&p, &len);
+            SDLTest_AssertCheck(cp == SDL_INVALID_UNICODE_CODEPOINT && p == out_of_range[i] + 1,
+                                "SDL_StepUTF8 rejects a value above U+10FFFF (case %d): got U+%X, advanced %d",
+                                i, (unsigned)cp, (int)(p - out_of_range[i]));
+        }
+        const char *max = "\xF4\x8F\xBF\xBF";
+        const char *p = max;
+        size_t len = 4;
+        const Uint32 cp = SDL_StepUTF8(&p, &len);
+        SDLTest_AssertCheck(cp == 0x10FFFF && p == max + 4, "SDL_StepUTF8 still accepts U+10FFFF, got U+%X", (unsigned)cp);
+    }
+
+    /* F-004: with a NULL length, a truncated sequence stops at the terminator. */
+    {
+        const char truncated[] = "\xF0\x9F";
+        const char *p = truncated;
+        Uint32 cp = SDL_StepUTF8(&p, NULL);
+        SDLTest_AssertCheck(cp == SDL_INVALID_UNICODE_CODEPOINT && p == truncated + 1,
+                            "SDL_StepUTF8(NULL length) on a truncated sequence: got U+%X, advanced %d", (unsigned)cp, (int)(p - truncated));
+        SDLTest_AssertCheck(SDL_utf8strlen(truncated) == 2, "SDL_utf8strlen of a truncated sequence is 2, got %d", (int)SDL_utf8strlen(truncated));
+        SDLTest_AssertCheck(SDL_strcasecmp(truncated, "x") != 0, "SDL_strcasecmp with a truncated sequence");
+    }
+
+    /* F-007: SDL_utf8strlcpy never leaves a truncated character, even the first one. */
+    {
+        char dst[8];
+        size_t n = SDL_utf8strlcpy(dst, "\xE2\x82\xAC", 3);
+        SDLTest_AssertCheck(n == 0 && dst[0] == '\0', "SDL_utf8strlcpy(\"\\u20AC\", 3) copies nothing, got %d bytes", (int)n);
+        n = SDL_utf8strlcpy(dst, "\xF0\x9F\x98\x80", 4);
+        SDLTest_AssertCheck(n == 0 && dst[0] == '\0', "SDL_utf8strlcpy(U+1F600, 4) copies nothing, got %d bytes", (int)n);
+        n = SDL_utf8strlcpy(dst, "\xE2\x82\xAC", 4);
+        SDLTest_AssertCheck(n == 3 && SDL_strcmp(dst, "\xE2\x82\xAC") == 0, "SDL_utf8strlcpy(\"\\u20AC\", 4) copies it, got %d bytes", (int)n);
+        n = SDL_utf8strlcpy(dst, "a\xE2\x82\xAC", 4);
+        SDLTest_AssertCheck(n == 1 && SDL_strcmp(dst, "a") == 0, "SDL_utf8strlcpy(\"a\\u20AC\", 4) copies \"a\", got %d bytes", (int)n);
+    }
+
+    /* F-008: SDL_StepBackUTF8 reports stray trailing bytes instead of skipping them, and still
+       inverts SDL_StepUTF8 on valid text. */
+    {
+        const char *s = "a\x80";
+        const char *p = s + 2;
+        Uint32 cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == SDL_INVALID_UNICODE_CODEPOINT && p == s + 1, "StepBack over a stray 0x80: got U+%X at %d", (unsigned)cp, (int)(p - s));
+        cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == 'a' && p == s, "StepBack then finds 'a': got U+%X at %d", (unsigned)cp, (int)(p - s));
+
+        const char *text = "x\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80y";
+        static const Uint32 expected[] = { 'y', 0x1F600, 0x20AC, 0xE9, 'x' };
+        p = text + SDL_strlen(text);
+        for (int i = 0; i < (int)SDL_arraysize(expected); i++) {
+            cp = SDL_StepBackUTF8(text, &p);
+            SDLTest_AssertCheck(cp == expected[i], "StepBack over valid text, step %d: expected U+%X, got U+%X", i, (unsigned)expected[i], (unsigned)cp);
+        }
+        SDLTest_AssertCheck(p == text && SDL_StepBackUTF8(text, &p) == 0, "StepBack ends at the start");
+    }
+    return TEST_COMPLETED;
+}
+
 /* ================= Test References ================== */
+
+static const SDLTest_TestCaseReference stdlibTest_utf8 = {
+    stdlib_utf8, "stdlib_utf8", "UTF-8 stepping and copying (F-004, F-005, F-007, F-008)", TEST_ENABLED
+};
 
 /* Standard C routine test cases */
 static const SDLTest_TestCaseReference stdlibTest_strnlen = {
@@ -1552,6 +1626,7 @@ static const SDLTest_TestCaseReference *stdlibTests[] = {
     &stdlibTest_wcstox,
     &stdlibTest_strtox,
     &stdlibTest_strtod,
+    &stdlibTest_utf8,
     NULL
 };
 

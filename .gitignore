@@ -186,3 +186,6 @@ doxygen_warn.txt
 .direnv/
 result
 result-*
+
+# Lean build output
+verification/lean/.lake/

@@ -36,12 +36,22 @@ costly:
 
 ## Ground rules
 
-- **Fork only.** Upstream policy forbids AI-generated contributions (RESEARCH §8). All of this
-  stays under `verification/` in `bgyss/SDL`. A finding goes upstream only if a human reproduces
-  it on a real build and writes the report or fix in their own words.
-- **No `src/` edits in a proof change.** Proofs and specs refer to a pinned SDL commit, recorded
-  in `TRUSTED_BASE.md`. A C change that a proof needs is a separate, human-reviewed patch that
-  states which inputs change behaviour.
+- **Fork only.** Upstream policy forbids AI-generated contributions (RESEARCH §8). Nothing here
+  goes upstream.
+- **Reproduction is automated (since 2026-11-05).** There is no manual reproduction step. Each
+  finding gets a standalone program in `repro/` and an `EXPECT` line, and `mise run
+  repro:verify` shows it on the pre-fix tree and checks that it is gone on the current one.
+- **Fork policy (since 2026-11-05): the fork fixes its own bugs.** `bgyss/SDL` is an independent,
+  agent-driven test bed (see CLAUDE.md), so findings are fixed in `src/`. A fix:
+  - is its own commit, citing the finding ID
+  - states which inputs change behaviour; where a model exists, the model's patch-audit
+    theorem or fix config is that statement
+  - adds a test (`testautomation`) or keeps the fuzz regression input, which must then pass
+    with `SDL_FUZZ_KNOWN=1`
+  - moves the model forward: the Lean/TLA+ "real code" model becomes the fixed one, and the
+    pre-fix model is kept as the record of the finding.
+- **Proofs and specs name the SDL sources they describe.** Each model records the commit it
+  transcribes (TRUSTED_BASE.md). A proof change and a `src/` change go in separate commits.
 - **Every property must be able to fail.** For each TLA+ invariant or temporal property, commit a
   seeded mutant spec that violates it. TLC coverage must show every action enabled. For each Lean
   theorem about the C, keep a differential test that fails on a mutated C build.
@@ -77,21 +87,29 @@ in parallel.
 
 ### Phase 0: Foundations and reproducing the leads
 
-- [ ] Write `TRUSTED_BASE.md`. It records:
+- [x] Write `TRUSTED_BASE.md`. It records:
   - the pinned SDL commit
   - Lean, TLC and clang versions
   - per-spec bounds and backend abstractions
   - the memory-model assumption (sequentially consistent interleaving)
-- [ ] Get a sanitizer toolchain working in the dev shell. Configure SDL with
+- [x] Get a sanitizer toolchain working in the dev shell. Configure SDL with
   `-fsanitize=address,undefined` using the flake's clang. If nix clang can't link the ASan
   runtime on macOS, add `llvmPackages.compiler-rt` or document `/usr/bin/clang` as the
-  sanitizer compiler.
-- [ ] **Human step.** Reproduce the three leads from RESEARCH §10 on a real sanitizer build:
-  - the `SDL_StepUTF8(…, NULL)` over-read
-  - `StepUTF8` accepting codepoints above U+10FFFF
-  - the unterminated buffer for a 20-character gamepad mapping element name
+  sanitizer compiler. *Done: nix clang's ASan hangs on macOS 27, so `mise run asan:build`
+  uses Apple clang (TRUSTED_BASE.md).*
+- [x] Tooling reproduction: `mise run repro` reproduces all three leads on a real ASan build.
+  The gamepad lead turned out to be live only on the 128-character joystick side; the
+  20-character game-button side is latent. See F-004, F-005 and F-006.
+- [x] Independent reproduction (replaces the planned human step, 2026-11-05): `repro/` has a
+  standalone public-API program per finding. They share no code with the harness, and
+  `repro/run.sh` builds them against the pre-fix tree and the fixed tree. All three leads from
+  RESEARCH §10 reproduce on `cb6224d2e` and are gone after the fix:
+  - the `SDL_StepUTF8(…, NULL)` over-read (F-004)
+  - `StepUTF8` accepting code points above U+10FFFF (F-005)
+  - the gamepad mapping buffer (F-006; live on the 128-character joystick side)
 
-  Record the results in `FINDINGS.md`. Decide personally whether to report any of them upstream.
+  So do F-007 – F-021, including the two audio use-after-free races, which had only model
+  counterexamples before.
 - [ ] Settle RESEARCH open question 3: find where SDL documents its threading contracts for
   `SDL_Quit*` and for event and audio calls. The specs encode those contracts, not guesses.
 
@@ -103,21 +121,27 @@ leads are confirmed or dismissed.
 These two are small and fully readable, so they are cheap pilots for the method itself: shared
 modules, mutants, coverage checks and the `mise run tla` loop.
 
+**Status (2026-11-04):** both specs are done. Results are in FINDINGS.md: F-001 (InitState
+proved within bounds), F-002 (correction: the generic condition variable is not used on macOS)
+and F-003 (a stale-token spurious wakeup in the generic condition variable).
+`tla/common/` was deferred. Both specs are self-contained, so the shared modules will be
+extracted when Phase 4 needs them.
+
 - [ ] `tla/common/`: `Mutex`, `Semaphore` and `AtomicRef` (compare-and-swap) operators.
-- [ ] `tla/initstate/`: model `SDL_ShouldInit`, `SDL_ShouldQuit` and `SDL_SetInitialized`
+- [x] `tla/initstate/`: model `SDL_ShouldInit`, `SDL_ShouldQuit` and `SDL_SetInitialized`
   (`src/thread/SDL_thread.c:556`) with N threads. Check:
   - at most one thread in INITIALIZING or UNINITIALIZING
   - init and quit bodies never overlap
   - every caller eventually returns, assuming the initializing thread eventually calls
     `SetInitialized`
   - include failed init (`SetInitialized(false)`).
-- [ ] `tla/cond_generic/`: write a PlusCal model of `src/thread/generic/SDL_syscond.c` over the
+- [x] `tla/cond_generic/`: write a model of `src/thread/generic/SDL_syscond.c` over the
   generic semaphore. Check:
   - no lost signal: a waiter that is waiting when `Signal` is called gets woken
   - `Broadcast` wakes all current waiters
   - no deadlock under timeouts
-  - this backend is live on macOS/iOS (RESEARCH §5 T3)
-- [ ] Commit at least one mutant per property, and record the coverage output.
+  - (correction: this backend is not used on macOS/iOS; see FINDINGS F-002)
+- [x] Commit at least one mutant per property, and record the coverage output.
 - [ ] Make module lookup for `common/` work: either set `-DTLA-Library` through the `tlc`
   wrapper's Java options or use per-spec symlinks. Update the `mise` task to match.
 
@@ -126,57 +150,101 @@ in `FINDINGS.md`.
 
 ### Phase 2: Lean pilot (UTF-8)
 
-- [ ] Create the `lean/` lake project with a `lean-toolchain` file. Add Mathlib only if a proof
+**Status (2026-11-05): done.** StepBack, utf8strlcpy and the encoder were added on 2026-11-05
+(`Utf8Encode.lean`, `Utf8String.lean`, 56 theorems). They found F-007 and F-008. `mise run lean`
+checks 12 proof mutants. `mise run lean:diff` adds a corpus differential: the new string-level
+models against the real C on the fuzz_utf8 corpora.
+
+Earlier status (2026-11-04), for the record:
+- `SDLVerif/Utf8.lean` has 12 theorems about `StepUTF8`. They cover bounds, progress, end of
+  string, RFC 3629 completeness and soundness, and an exact characterization of the out-of-range
+  bug. They also cover a model fix with a patch audit.
+- `mise run lean` checks the theorems, the axioms and seven proof mutants.
+- `mise run lean:diff` compares against the real C on 3,096,576 cases: every lead byte, times
+  12 boundary values for each continuation byte, times `slen` 0–5 and `NULL`. That is a
+  boundary grid, not all 2^32 sequences. All cases agree.
+- (Done 2026-11-05) `SDL_StepBackUTF8`, `SDL_utf8strlcpy`, and an encoder with round-trip proofs.
+- Findings: F-004 and F-005, plus F-006 from the Phase 0 reproduction.
+
+- [x] Create the `lean/` lake project with a `lean-toolchain` file. Add Mathlib only if a proof
   needs it, because it is expensive to build.
-- [ ] `SDLVerif/Utf8.lean`:
+- [x] `SDLVerif/Utf8.lean`, `Utf8Encode.lean`, `Utf8String.lean`:
   - Write an executable RFC 3629 decoder model.
   - Write a model of SDL's documented `SDL_StepUTF8` / `SDL_StepBackUTF8` / `SDL_utf8strlcpy`
     contract, taken from `include/SDL3/SDL_stdinc.h`.
   - Prove that the model accepts exactly the well-formed sequences, never reads past
     `slen`/NUL, round-trips with an encoder, and that `StepBack` inverts `Step`.
   - Use `bv_decide` / `decide` for the byte-level lemmas.
-- [ ] `harness/utf8_diff.c` plus `lean/test/`: run SDL's C and the Lean executable on the same
+- [x] (boundary grid, plus the fuzz_utf8 corpora since 2026-11-05: `test/utf8_corpus.sh`)
+  `lean/test/utf8_diff.c` plus `lean/test/`: run SDL's C and the Lean executable on the same
   inputs: exhaustive over all ≤4-byte sequences plus fuzzer-generated longer strings. Report
   every disagreement. Expected disagreements, such as codepoints above U+10FFFF if confirmed in
   Phase 0, are listed explicitly in `FINDINGS.md`, never silenced in the harness.
 
 **Exit:** the theorems check with no `sorry` and pass the axioms check. The differential run is
-clean except for documented, human-triaged disagreements.
+clean except for documented disagreements, each tied to a finding.
 
 ### Phase 3: Fuzz harnesses as specs (the article's "tests to specs" step)
 
-- [ ] Add libFuzzer targets in `verification/harness/`, built with a fork-only CMake option, for:
+**Status (2026-11-05): done for this round.** Six targets are in `harness/` (README.md there),
+built by `mise run fuzz:build` with no CMake or `src/` changes. Five 5-minute runs per target
+found F-009 to F-018. The targets stop again only when they hit something new: each known
+finding is skipped on its own trigger set, and `mise run fuzz:regress` keeps each one
+reproducible. utf8 and iconv have run more than 10M inputs each with nothing new.
+
+- [x] Add libFuzzer targets in `verification/harness/` (built by `harness/fuzz.sh` rather than
+  a CMake option, so no CMake file changes), for:
   - `SDL_StepUTF8` / `SDL_iconv`
   - integer rect functions
   - `SDL_AddGamepadMapping`
   - `SDL_LoadBMP_IO`
   - `SDL_LoadWAV_IO`
-- [ ] Seed the corpora from `test/` resources and `testautomation_*` cases.
-- [ ] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets human
-  triage, and gets a regression input.
-- [ ] Write down the "no crash, hang or sanitizer report for inputs ≤ N bytes" property for each
-  target. That property is the spec a later binary-level proof (Phase 6) would discharge.
+- [x] Seed the corpora from `test/` resources and `testautomation_*` cases (`seedgen.c`, plus
+  `test/sample.wav` and `test/sword.wav` heads; `test/` has no BMPs any more, so BMP seeds are
+  generated, including RLE4/RLE8/1-bit/4-bit).
+- [x] Run each target under ASan and UBSan. Any crash goes into `FINDINGS.md`, gets triaged,
+  gets a regression input, and gets a standalone program in `repro/`.
+- [x] Write down the "no crash, hang or sanitizer report for inputs ≤ N bytes" property for each
+  target (TRUSTED_BASE.md, "Fuzz properties"). That property is the spec a later binary-level
+  proof (Phase 6) would discharge.
 
 **Exit:** all five targets run for a fixed budget with no untriaged crashes, and the corpora are
 committed (or stored) with sizes recorded.
 
 ### Phase 4: The high-value TLA+ targets, with trace validation
 
-- [ ] **Read before modeling.** Check whether the Cocoa, X11, Wayland and Win32
+**Status (2026-11-05): done.**
+- `tla/events_wait` confirmed L-4 as F-019 with an 8-state counterexample. A stress program
+  then reproduced it on the real macOS build (`repro/f019_lost_wakeup`).
+- `tla/audio_device` confirmed L-5 as F-020 (12 states), and showed that the obvious fix is
+  not enough. `repro/f020_audio_lookup_uaf` reproduces it under ASan, and F-021 is the same
+  window in a second lookup function.
+- Both have passing pre-fix and current-code configs, and four or three mutants each.
+- Trace validation works for both specs (`mise run trace`, TRUSTED_BASE.md "Trace
+  validation"). Real runs of the fixed code replay in each model, and the pre-fix model can't
+  replay them. It found one gap: the events model lacked `SDL_WaitEventTimeoutNS`'s entry
+  check. The model now has it.
+
+- [x] **Read before modeling.** (Cocoa, X11, Win32 latch the wakeup and none re-checks SDL's
+  queue; Wayland not read. See TRUSTED_BASE.md, Abstractions.) Check whether the Cocoa, X11, Wayland and Win32
   `WaitEventTimeout` backends latch a wakeup that is posted before the wait begins (RESEARCH
   open question 1). That answer decides how the backend is abstracted.
-- [ ] `tla/events_wait/`: model `SDL_WaitEventTimeout_Device` (`src/events/SDL_events.c:1631`),
+- [x] `tla/events_wait/`: model `SDL_WaitEventTimeout_Device` (`src/events/SDL_events.c:1631`),
   `SDL_SendWakeupEvent` and the queue lock. Check that there is no lost wakeup when an event is
   pushed between the queue check (`:1646`) and setting `wakeup_window` (`:1671`).
-- [ ] `tla/audio_device/`: model device lookup, refcounting and disconnect
+- [x] `tla/audio_device/`: model device lookup, refcounting and disconnect
   (`src/audio/SDL_audio.c:481`). Check that a device is never freed while it is between lookup
   (`:493`) and taking its reference, given the other references that exist in practice (open
   question 2).
-- [ ] **Trace validation** (Cirstea, Kuppe, Loillier and Merz 2024):
-  - Add `VERIF_TRACE` NDJSON logging in `instrument/`.
-  - Run real SDL test programs (`testautomation`, `testaudiohotplug`, event stress) with it.
-  - Check the traces with a `Trace.tla` per spec.
-  - This connects each model to the real code.
+- [x] **Trace validation** (Cirstea, Kuppe, Loillier and Merz 2024):
+  - NDJSON trace hooks (`instrument/verif_trace.h`) are applied as a patch to an exported copy
+    of the tree (`instrument/*.patch`, `build.sh`). This replaces the planned CMake option, so
+    `src/` never contains them.
+  - The workloads are the F-019 and F-020 race programs (`trace_events.c`, `trace_audio.c`),
+    not `testautomation`/`testaudiohotplug`. They drive exactly the modelled paths, and
+    `testaudiohotplug` needs hardware that hotplugs.
+  - Each spec's `Trace.tla` checks the traces, and a mutant config (the pre-fix model) must
+    fail to replay them.
 
 **Exit:** both specs check with stated bounds, and each has mutants. At least one real trace per
 spec validates. Each hypothesis is marked confirmed (with a counterexample trace) or refuted
@@ -212,7 +280,8 @@ go/no-go write-up.
 
 ## Open decisions for the user
 
-1. Whether any confirmed finding is reported upstream, and by whom (RESEARCH §8, open question 7).
+1. (Settled 2026-11-05: nothing goes upstream, and there is no manual reproduction step. The
+   fork fixes its findings itself; see "Fork policy".)
 2. Whether to add Apalache for symbolic checking with larger bounds than TLC can handle. It
    isn't in nixpkgs as far as checked, so it would need a pinned fetch in the flake.
 3. Whether Phase 6 is in scope at all.

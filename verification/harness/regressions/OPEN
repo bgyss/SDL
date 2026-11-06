@@ -1,0 +1,2 @@
+# Findings whose fuzz regressions still reproduce (not fixed in this fork). One ID per line.
+# All fuzz-found findings were fixed on 2026-11-05.

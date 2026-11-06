@@ -1,0 +1,17 @@
+name = "SDLVerif"
+version = "0.1.0"
+defaultTargets = ["SDLVerif", "utf8-diff", "utf8-corpus"]
+
+[[lean_lib]]
+name = "SDLVerif"
+
+# Prints the Lean model's results for the differential test against the C
+# (see test/utf8_diff.sh).
+[[lean_exe]]
+name = "utf8-diff"
+root = "test.Utf8Diff"
+
+# Prints the string-level models on corpus inputs (see test/utf8_corpus.sh).
+[[lean_exe]]
+name = "utf8-corpus"
+root = "test.Utf8Corpus"

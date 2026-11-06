@@ -407,6 +407,24 @@ static bool SDL_IsAudioDeviceRecording(SDL_AudioDeviceID devid)
     return (devid & (1 << 0)) == 0;
 }
 
+/* Take a reference only if the device is still alive (count > 0). Call this with
+   subsystem_rwlock held for reading, on a device found in the hash: UnrefPhysicalAudioDevice
+   drops the count to 0 *before* it takes the write lock to remove the device, so a plain
+   increment here could resurrect a device that is about to be freed (bgyss/SDL F-020; model:
+   verification/tla/audio_device, MC_fix.cfg and findings/ref_in_lock.cfg). */
+static bool TryRefPhysicalAudioDevice(SDL_AudioDevice *device)
+{
+    for (;;) {
+        const int count = SDL_GetAtomicInt(&device->refcount);
+        if (count <= 0) {
+            return false;
+        }
+        if (SDL_CompareAndSwapAtomicInt(&device->refcount, count, count + 1)) {
+            return true;
+        }
+    }
+}
+
 static void ObtainPhysicalAudioDeviceObj(SDL_AudioDevice *device) SDL_NO_THREAD_SAFETY_ANALYSIS  // !!! FIXMEL SDL_ACQUIRE
 {
     if (device) {
@@ -487,15 +505,20 @@ static SDL_AudioDevice *ObtainPhysicalAudioDevice(SDL_AudioDeviceID devid)  // !
     } else if (!SDL_GetCurrentAudioDriver()) {  // (the `islogical` path, above, checks this in ObtainLogicalAudioDevice.)
         SDL_SetError("Audio subsystem is not initialized");
     } else {
+        // Find the device and take its reference under the same read lock (bgyss/SDL F-020:
+        // referencing it after the unlock could touch a device freed in between).
         SDL_LockRWLockForReading(current_audio.subsystem_rwlock);
         SDL_FindInHashTable(current_audio.device_hash_physical, (const void *) (uintptr_t) devid, (const void **) &device);
         SDL_assert(!device || (device->instance_id == devid));
+        if (device && !TryRefPhysicalAudioDevice(device)) {
+            device = NULL;  // being destroyed: treat it as already gone.
+        }
         SDL_UnlockRWLock(current_audio.subsystem_rwlock);
 
         if (!device) {
             SDL_SetError("Invalid audio device instance ID");
         } else {
-            ObtainPhysicalAudioDeviceObj(device);
+            SDL_LockMutex(device->lock);  // the reference was taken above.
         }
     }
 
@@ -627,6 +650,9 @@ static void DestroyPhysicalAudioDevice(SDL_AudioDevice *device)
 // Don't hold the device lock when calling this, as we may destroy the device!
 void UnrefPhysicalAudioDevice(SDL_AudioDevice *device)
 {
+    if (!device) {
+        return;  // so a SDL_FindAndRefPhysicalAudioDevice*() result can be released unchecked.
+    }
     if (SDL_AtomicDecRef(&device->refcount)) {
         // take it out of the device list.
         SDL_LockRWLockForWriting(current_audio.subsystem_rwlock);
@@ -1578,6 +1604,7 @@ typedef struct FindAudioDeviceByCallbackData
 {
     bool (*callback)(void *userdata, SDL_AudioDevice *device);
     void *userdata;
+    bool take_ref;
     SDL_AudioDevice *retval;
 } FindAudioDeviceByCallbackData;
 
@@ -1588,6 +1615,9 @@ static bool SDLCALL FindAudioDeviceByCallback(void *userdata, const SDL_HashTabl
     SDL_assert(SDL_IsAudioDevicePhysical(devid));  // should only be iterating device_hash_physical.
     SDL_AudioDevice *device = (SDL_AudioDevice *) value;
     if (data->callback(data->userdata, device)) {  // found it?
+        if (data->take_ref && !TryRefPhysicalAudioDevice(device)) {
+            return true;  // its last reference is gone and it's about to be removed: skip it (bgyss/SDL F-021).
+        }
         data->retval = device;
         SDL_assert(data->retval->instance_id == devid);
         return false;  // stop iterating, we found it.
@@ -1595,14 +1625,14 @@ static bool SDLCALL FindAudioDeviceByCallback(void *userdata, const SDL_HashTabl
     return true;  // keep iterating.
 }
 
-SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+static SDL_AudioDevice *FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata, bool take_ref)
 {
     if (!SDL_GetCurrentAudioDriver()) {
         SDL_SetError("Audio subsystem is not initialized");
         return NULL;
     }
 
-    FindAudioDeviceByCallbackData data = { callback, userdata, NULL };
+    FindAudioDeviceByCallbackData data = { callback, userdata, take_ref, NULL };
     SDL_LockRWLockForReading(current_audio.subsystem_rwlock);
     SDL_IterateHashTable(current_audio.device_hash_physical, FindAudioDeviceByCallback, &data);
     SDL_UnlockRWLock(current_audio.subsystem_rwlock);
@@ -1614,6 +1644,21 @@ SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *us
     return data.retval;
 }
 
+SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+{
+    return FindPhysicalAudioDeviceByCallback(callback, userdata, false);
+}
+
+/* The result holds a reference taken under the same read lock as the search, so a concurrent
+   disconnect can't free the device before the caller is done with it. Backends used to find a
+   device with the unreferenced version and pass it to SDL_AudioDeviceDisconnected or
+   SDL_DefaultAudioDeviceChanged, which take their reference only after the lock is gone: the
+   same window as F-020 (bgyss/SDL F-021). */
+SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByCallback(bool (*callback)(void *userdata, SDL_AudioDevice *device), void *userdata)
+{
+    return FindPhysicalAudioDeviceByCallback(callback, userdata, true);
+}
+
 static bool TestDeviceHandleCallback(void *handle, SDL_AudioDevice *device)
 {
     return device->handle == handle;
@@ -1622,6 +1667,11 @@ static bool TestDeviceHandleCallback(void *handle, SDL_AudioDevice *device)
 SDL_AudioDevice *SDL_FindPhysicalAudioDeviceByHandle(void *handle)
 {
     return SDL_FindPhysicalAudioDeviceByCallback(TestDeviceHandleCallback, handle);
+}
+
+SDL_AudioDevice *SDL_FindAndRefPhysicalAudioDeviceByHandle(void *handle)
+{
+    return SDL_FindAndRefPhysicalAudioDeviceByCallback(TestDeviceHandleCallback, handle);
 }
 
 const char *SDL_GetAudioDeviceName(SDL_AudioDeviceID devid)

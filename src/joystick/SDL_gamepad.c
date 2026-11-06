@@ -1639,6 +1639,26 @@ const char *SDL_GetGamepadStringForButton(SDL_GamepadButton button)
     return NULL;
 }
 
+/* Parse the decimal number of a joystick axis, button or hat mask in a mapping string. Like
+   SDL_atoi it stops at the first non-digit, but a number that doesn't fit in an int makes the
+   binding invalid. SDL_atoi is undefined then, and returned -1 on macOS, which passed the
+   trigger check `axis < naxes` and indexed joystick->axes[-1] (bgyss/SDL F-022). */
+static bool SDL_PrivateParseJoystickIndex(const char *str, int *value)
+{
+    Sint64 result = 0;
+    if (!SDL_isdigit((unsigned char)*str)) {
+        return false;
+    }
+    for (; SDL_isdigit((unsigned char)*str); ++str) {
+        result = result * 10 + (*str - '0');
+        if (result > SDL_MAX_SINT32) {
+            return false;
+        }
+    }
+    *value = (int)result;
+    return true;
+}
+
 /*
  * given a gamepad button name and a joystick name update our mapping structure with it
  */
@@ -1703,13 +1723,17 @@ static bool SDL_PrivateParseGamepadElement(SDL_Gamepad *gamepad, const char *szG
     if (*szJoystickButton == '+' || *szJoystickButton == '-') {
         half_axis_input = *szJoystickButton++;
     }
-    if (szJoystickButton[SDL_strlen(szJoystickButton) - 1] == '~') {
+    // An empty binding ("a:," or a lone sign) has no last character (bgyss/SDL F-009).
+    const size_t joystick_button_len = SDL_strlen(szJoystickButton);
+    if (joystick_button_len > 0 && szJoystickButton[joystick_button_len - 1] == '~') {
         invert_input = true;
     }
 
     if (szJoystickButton[0] == 'a' && SDL_isdigit((unsigned char)szJoystickButton[1])) {
         bind.input_type = SDL_GAMEPAD_BINDTYPE_AXIS;
-        bind.input.axis.axis = SDL_atoi(&szJoystickButton[1]);
+        if (!SDL_PrivateParseJoystickIndex(&szJoystickButton[1], &bind.input.axis.axis)) {
+            return false;
+        }
         if (half_axis_input == '+') {
             bind.input.axis.axis_min = 0;
             bind.input.axis.axis_max = SDL_JOYSTICK_AXIS_MAX;
@@ -1727,11 +1751,16 @@ static bool SDL_PrivateParseGamepadElement(SDL_Gamepad *gamepad, const char *szG
         }
     } else if (szJoystickButton[0] == 'b' && SDL_isdigit((unsigned char)szJoystickButton[1])) {
         bind.input_type = SDL_GAMEPAD_BINDTYPE_BUTTON;
-        bind.input.button = SDL_atoi(&szJoystickButton[1]);
+        if (!SDL_PrivateParseJoystickIndex(&szJoystickButton[1], &bind.input.button)) {
+            return false;
+        }
     } else if (szJoystickButton[0] == 'h' && SDL_isdigit((unsigned char)szJoystickButton[1]) &&
                szJoystickButton[2] == '.' && SDL_isdigit((unsigned char)szJoystickButton[3])) {
-        int hat = SDL_atoi(&szJoystickButton[1]);
-        int mask = SDL_atoi(&szJoystickButton[3]);
+        int hat = szJoystickButton[1] - '0';  // the format allows one digit: "h<hat>.<mask>"
+        int mask;
+        if (!SDL_PrivateParseJoystickIndex(&szJoystickButton[3], &mask)) {
+            return false;
+        }
         bind.input_type = SDL_GAMEPAD_BINDTYPE_HAT;
         bind.input.hat.hat = hat;
         bind.input.hat.hat_mask = mask;
@@ -1787,14 +1816,14 @@ static bool SDL_PrivateParseGamepadConfigString(SDL_Gamepad *gamepad, const char
             SDL_zeroa(szJoystickButton);
 
         } else if (bGameButton) {
-            if (i >= sizeof(szGameButton)) {
+            if (i >= sizeof(szGameButton) - 1) {  // leave room for the terminator (bgyss/SDL F-006)
                 szGameButton[sizeof(szGameButton) - 1] = '\0';
                 return SDL_SetError("Button name too large: %s", szGameButton);
             }
             szGameButton[i] = *pchPos;
             i++;
         } else {
-            if (i >= sizeof(szJoystickButton)) {
+            if (i >= sizeof(szJoystickButton) - 1) {  // leave room for the terminator (bgyss/SDL F-006)
                 szJoystickButton[sizeof(szJoystickButton) - 1] = '\0';
                 return SDL_SetError("Joystick button name too large: %s", szJoystickButton);
             }
@@ -1995,7 +2024,7 @@ static void SDL_PrivateLoadButtonMapping(SDL_Gamepad *gamepad, GamepadMapping_t 
             binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS &&
             (binding->output.axis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
              binding->output.axis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
-            if (binding->input.axis.axis < gamepad->joystick->naxes) {
+            if (binding->input.axis.axis >= 0 && binding->input.axis.axis < gamepad->joystick->naxes) {  // bgyss/SDL F-022
                 gamepad->joystick->axes[binding->input.axis.axis].value =
                     gamepad->joystick->axes[binding->input.axis.axis].zero = (Sint16)binding->input.axis.axis_min;
             }
@@ -2734,7 +2763,7 @@ static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
     if (!SDL_strstr(mapping->mapping, SDL_GAMEPAD_PLATFORM_FIELD)) {
         // add memory for ',' + platform:PLATFORM
         need_platform = true;
-        if (mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {
+        if (*mapping->mapping && mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {  // guard the empty mapping: bgyss/SDL F-013
             needed += 1;
         }
         platform = SDL_GetPlatform();
@@ -2749,7 +2778,7 @@ static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
     (void)SDL_snprintf(pMappingString, needed, "%s,%s,%s", pchGUID, mapping->name, mapping->mapping);
 
     if (need_platform) {
-        if (mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {
+        if (*mapping->mapping && mapping->mapping[SDL_strlen(mapping->mapping) - 1] != ',') {  // guard the empty mapping: bgyss/SDL F-013
             SDL_strlcat(pMappingString, ",", needed);
         }
         SDL_strlcat(pMappingString, SDL_GAMEPAD_PLATFORM_FIELD, needed);

@@ -1,0 +1,72 @@
+import SDLVerif
+
+/-! Run with `lake env lean test/Axioms.lean`. `mise run lean` fails if any theorem depends on
+`sorryAx` or on an axiom outside the standard three and the auxiliary axioms that `bv_decide`
+introduces for its natively checked LRAT certificates (`*._native.bv_decide.*`). -/
+
+open SDLVerif.Utf8 in
+#print axioms reads_le_slen
+open SDLVerif.Utf8 in
+#print axioms progress
+open SDLVerif.Utf8 in
+#print axioms stops_at_end
+open SDLVerif.Utf8 in
+#print axioms complete
+open SDLVerif.Utf8 in
+#print axioms sound_in_range
+open SDLVerif.Utf8 in
+#print axioms accepts_out_of_range
+open SDLVerif.Utf8 in
+#print axioms out_of_range_iff
+open SDLVerif.Utf8 in
+#print axioms null_len_reads_past_nul
+open SDLVerif.Utf8 in
+#print axioms fixed_sound
+open SDLVerif.Utf8 in
+#print axioms fixed_complete
+open SDLVerif.Utf8 in
+#print axioms fixed_stops_at_nul
+open SDLVerif.Utf8 in
+#print axioms fix_changes_only_out_of_range
+open SDLVerif.Utf8 in
+#print axioms enc_len
+open SDLVerif.Utf8 in
+#print axioms enc_wf
+open SDLVerif.Utf8 in
+#print axioms enc_dec_roundtrip
+open SDLVerif.Utf8 in
+#print axioms enc_invalid
+open SDLVerif.Utf8 in
+#print axioms dec_enc_roundtrip
+open SDLVerif.Utf8 in
+#print axioms fixed_dec_enc_roundtrip
+open SDLVerif.Utf8 in
+#print axioms step_enc
+open SDLVerif.Utf8 in
+#print axioms stepBack_enc
+open SDLVerif.Utf8 in
+#print axioms stepBack_inverts_step
+open SDLVerif.Utf8 in
+#print axioms decodeFwd_encodeAll
+open SDLVerif.Utf8 in
+#print axioms decodeBack_encodeAll
+open SDLVerif.Utf8 in
+#print axioms stepBack_skips_only_cont
+open SDLVerif.Utf8 in
+#print axioms stepBack_swallows
+open SDLVerif.Utf8 in
+#print axioms lcpy_truncates_euro
+open SDLVerif.Utf8 in
+#print axioms lcpy_bounds
+open SDLVerif.Utf8 in
+#print axioms fixLcpy_wf
+open SDLVerif.Utf8 in
+#print axioms lcpy_c_vs_fixed
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_spec
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_sound
+open SDLVerif.Utf8 in
+#print axioms stepBackFix_enc
+open SDLVerif.Utf8 in
+#print axioms stepF_enc

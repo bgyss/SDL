@@ -28,7 +28,10 @@ static bool SDL_RECT_CAN_OVERFLOW(const RECTTYPE *rect)
         rect->y <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) ||
         rect->y >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
         rect->w >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
-        rect->h >= (SCALARTYPE)(SDL_MAX_SINT32 / 2)) {
+        rect->h >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
+        // Negative sizes must be bounded too, or x + w - 1 can overflow (bgyss/SDL F-015).
+        rect->w <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) ||
+        rect->h <= (SCALARTYPE)(SDL_MIN_SINT32 / 2)) {
         return true;
     }
     return false;
@@ -115,7 +118,9 @@ bool SDL_INTERSECTRECT(const RECTTYPE *A, const RECTTYPE *B, RECTTYPE *result)
     if (Bmax < Amax) {
         Amax = Bmax;
     }
-    result->w = Amax - Amin;
+    // With a negative size this difference can be below the type's range (bgyss/SDL F-015);
+    // the result is empty either way.
+    result->w = (SCALARTYPE)SDL_max((BIGSCALARTYPE)Amax - Amin, (BIGSCALARTYPE)SCALARMIN);
 
     // Vertical intersection
     Amin = A->y;
@@ -129,7 +134,7 @@ bool SDL_INTERSECTRECT(const RECTTYPE *A, const RECTTYPE *B, RECTTYPE *result)
     if (Bmax < Amax) {
         Amax = Bmax;
     }
-    result->h = Amax - Amin;
+    result->h = (SCALARTYPE)SDL_max((BIGSCALARTYPE)Amax - Amin, (BIGSCALARTYPE)SCALARMIN);
 
     return !SDL_RECTEMPTY(result);
 }
@@ -175,6 +180,11 @@ bool SDL_UNIONRECT(const RECTTYPE *A, const RECTTYPE *B, RECTTYPE *result)
     if (Bmax > Amax) {
         Amax = Bmax;
     }
+    // Two rects that each pass the overflow guard can still be up to ~3 * 2^30 apart
+    // (bgyss/SDL F-015).
+    if ((BIGSCALARTYPE)Amax - Amin > (BIGSCALARTYPE)SCALARMAX) {
+        return SDL_SetError("Potential rect math overflow");
+    }
     result->w = Amax - Amin;
 
     // Vertical union
@@ -188,6 +198,9 @@ bool SDL_UNIONRECT(const RECTTYPE *A, const RECTTYPE *B, RECTTYPE *result)
     result->y = Amin;
     if (Bmax > Amax) {
         Amax = Bmax;
+    }
+    if ((BIGSCALARTYPE)Amax - Amin > (BIGSCALARTYPE)SCALARMAX) {
+        return SDL_SetError("Potential rect math overflow");
     }
     result->h = Amax - Amin;
     return true;
@@ -209,6 +222,11 @@ bool SDL_ENCLOSEPOINTS(const POINTTYPE *points, int count, const RECTTYPE *clip,
     CHECK_PARAM(count < 1) {
         SDL_InvalidParamError("count");
         return false;
+    }
+
+    // The clip rect gets the same guard as every other rect argument (bgyss/SDL F-012).
+    CHECK_PARAM(clip && SDL_RECT_CAN_OVERFLOW(clip)) {
+        return SDL_SetError("Potential rect math overflow");
     }
 
     if (clip) {
@@ -285,6 +303,11 @@ bool SDL_ENCLOSEPOINTS(const POINTTYPE *points, int count, const RECTTYPE *clip,
     }
 
     if (result) {
+        // Points are not range-checked, so their span may not fit (bgyss/SDL F-012).
+        if ((BIGSCALARTYPE)maxx - minx + ENCLOSEPOINTS_EPSILON > (BIGSCALARTYPE)SCALARMAX ||
+            (BIGSCALARTYPE)maxy - miny + ENCLOSEPOINTS_EPSILON > (BIGSCALARTYPE)SCALARMAX) {
+            return SDL_SetError("Potential rect math overflow");
+        }
         result->x = minx;
         result->y = miny;
         result->w = (maxx - minx) + ENCLOSEPOINTS_EPSILON;
@@ -400,7 +423,15 @@ bool SDL_INTERSECTRECTANDLINE(const RECTTYPE *rect, SCALARTYPE *X1, SCALARTYPE *
         return true;
     }
 
-    // More complicated Cohen-Sutherland algorithm
+    /* More complicated Cohen-Sutherland algorithm. Its interpolation multiplies coordinate
+       differences, so the endpoints need the same range as the rect itself; all differences
+       below are taken in BIGSCALARTYPE (bgyss/SDL F-014). */
+    if (x1 <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) || x1 >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
+        y1 <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) || y1 >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
+        x2 <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) || x2 >= (SCALARTYPE)(SDL_MAX_SINT32 / 2) ||
+        y2 <= (SCALARTYPE)(SDL_MIN_SINT32 / 2) || y2 >= (SCALARTYPE)(SDL_MAX_SINT32 / 2)) {
+        return SDL_SetError("Potential rect math overflow");
+    }
     outcode1 = COMPUTEOUTCODE(rect, x1, y1);
     outcode2 = COMPUTEOUTCODE(rect, x2, y2);
     while (outcode1 || outcode2) {
@@ -411,16 +442,16 @@ bool SDL_INTERSECTRECTANDLINE(const RECTTYPE *rect, SCALARTYPE *X1, SCALARTYPE *
         if (outcode1) {
             if (outcode1 & CODE_TOP) {
                 y = recty1;
-                x = (SCALARTYPE) (x1 + ((BIGSCALARTYPE)(x2 - x1) * (y - y1)) / (y2 - y1));
+                x = (SCALARTYPE) (x1 + (((BIGSCALARTYPE)x2 - x1) * ((BIGSCALARTYPE)y - y1)) / ((BIGSCALARTYPE)y2 - y1));
             } else if (outcode1 & CODE_BOTTOM) {
                 y = recty2;
-                x = (SCALARTYPE) (x1 + ((BIGSCALARTYPE)(x2 - x1) * (y - y1)) / (y2 - y1));
+                x = (SCALARTYPE) (x1 + (((BIGSCALARTYPE)x2 - x1) * ((BIGSCALARTYPE)y - y1)) / ((BIGSCALARTYPE)y2 - y1));
             } else if (outcode1 & CODE_LEFT) {
                 x = rectx1;
-                y = (SCALARTYPE) (y1 + ((BIGSCALARTYPE)(y2 - y1) * (x - x1)) / (x2 - x1));
+                y = (SCALARTYPE) (y1 + (((BIGSCALARTYPE)y2 - y1) * ((BIGSCALARTYPE)x - x1)) / ((BIGSCALARTYPE)x2 - x1));
             } else if (outcode1 & CODE_RIGHT) {
                 x = rectx2;
-                y = (SCALARTYPE) (y1 + ((BIGSCALARTYPE)(y2 - y1) * (x - x1)) / (x2 - x1));
+                y = (SCALARTYPE) (y1 + (((BIGSCALARTYPE)y2 - y1) * ((BIGSCALARTYPE)x - x1)) / ((BIGSCALARTYPE)x2 - x1));
             }
             x1 = x;
             y1 = y;
@@ -429,23 +460,23 @@ bool SDL_INTERSECTRECTANDLINE(const RECTTYPE *rect, SCALARTYPE *X1, SCALARTYPE *
             if (outcode2 & CODE_TOP) {
                 SDL_assert(y2 != y1); // if equal: division by zero.
                 y = recty1;
-                x = (SCALARTYPE) (x1 + ((BIGSCALARTYPE)(x2 - x1) * (y - y1)) / (y2 - y1));
+                x = (SCALARTYPE) (x1 + (((BIGSCALARTYPE)x2 - x1) * ((BIGSCALARTYPE)y - y1)) / ((BIGSCALARTYPE)y2 - y1));
             } else if (outcode2 & CODE_BOTTOM) {
                 SDL_assert(y2 != y1); // if equal: division by zero.
                 y = recty2;
-                x = (SCALARTYPE) (x1 + ((BIGSCALARTYPE)(x2 - x1) * (y - y1)) / (y2 - y1));
+                x = (SCALARTYPE) (x1 + (((BIGSCALARTYPE)x2 - x1) * ((BIGSCALARTYPE)y - y1)) / ((BIGSCALARTYPE)y2 - y1));
             } else if (outcode2 & CODE_LEFT) {
                 /* If this assertion ever fires, here's the static analysis that warned about it:
                    http://buildbot.libsdl.org/sdl-static-analysis/sdl-macosx-static-analysis/sdl-macosx-static-analysis-1101/report-b0d01a.html#EndPath */
                 SDL_assert(x2 != x1); // if equal: division by zero.
                 x = rectx1;
-                y = (SCALARTYPE) (y1 + ((BIGSCALARTYPE)(y2 - y1) * (x - x1)) / (x2 - x1));
+                y = (SCALARTYPE) (y1 + (((BIGSCALARTYPE)y2 - y1) * ((BIGSCALARTYPE)x - x1)) / ((BIGSCALARTYPE)x2 - x1));
             } else if (outcode2 & CODE_RIGHT) {
                 /* If this assertion ever fires, here's the static analysis that warned about it:
                    http://buildbot.libsdl.org/sdl-static-analysis/sdl-macosx-static-analysis/sdl-macosx-static-analysis-1101/report-39b114.html#EndPath */
                 SDL_assert(x2 != x1); // if equal: division by zero.
                 x = rectx2;
-                y = (SCALARTYPE) (y1 + ((BIGSCALARTYPE)(y2 - y1) * (x - x1)) / (x2 - x1));
+                y = (SCALARTYPE) (y1 + (((BIGSCALARTYPE)y2 - y1) * ((BIGSCALARTYPE)x - x1)) / ((BIGSCALARTYPE)x2 - x1));
             }
             x2 = x;
             y2 = y;
@@ -463,6 +494,8 @@ bool SDL_INTERSECTRECTANDLINE(const RECTTYPE *rect, SCALARTYPE *X1, SCALARTYPE *
 #undef POINTTYPE
 #undef SCALARTYPE
 #undef BIGSCALARTYPE
+#undef SCALARMIN
+#undef SCALARMAX
 #undef COMPUTEOUTCODE
 #undef ENCLOSEPOINTS_EPSILON
 #undef SDL_RECT_CAN_OVERFLOW

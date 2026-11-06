@@ -1643,19 +1643,28 @@ static int SDL_WaitEventTimeout_Device(SDL_VideoDevice *_this, SDL_Window *wakeu
         */
         SDL_PumpEventsInternal(true);
 
+        /* Publish the window *before* the last look at the queue. An event pushed after the
+           check below then finds wakeup_window set and posts a native wakeup, which the backend
+           keeps until we wait. Publishing after the check lost that wakeup (bgyss/SDL F-019;
+           model: verification/tla/events_wait, MC_fix.cfg). */
+        SDL_SetAtomicPointer(&_this->wakeup_window, wakeup_window);
+
         status = SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
         if (status < 0) {
             // Got an error: return
+            SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
             break;
         }
         if (status > 0) {
             // There is an event, we can return.
+            SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
             return 1;
         }
         // No events found in the queue, call WaitEventTimeout to wait for an event.
         if (timeoutNS > 0) {
             Sint64 elapsed = SDL_GetTicksNS() - start;
             if (elapsed >= timeoutNS) {
+                SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
                 return 0;
             }
             loop_timeoutNS = (timeoutNS - elapsed);
@@ -1668,7 +1677,6 @@ static int SDL_WaitEventTimeout_Device(SDL_VideoDevice *_this, SDL_Window *wakeu
                 loop_timeoutNS = poll_intervalNS;
             }
         }
-        SDL_SetAtomicPointer(&_this->wakeup_window, wakeup_window);
         status = _this->WaitEventTimeout(_this, loop_timeoutNS);
         SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
         if (status == 0 && poll_intervalNS != SDL_MAX_SINT64 && loop_timeoutNS == poll_intervalNS) {

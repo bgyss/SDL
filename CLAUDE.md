@@ -2,13 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Upstream contribution policy (read first)
+## What this repository is (read first)
 
-Upstream SDL's `AGENTS.md`/`CLAUDE.md` state that generative AI, including LLMs, should not be used
-in any way when contributing to SDL, and that AI-generated comments or code must not be submitted
-in bug reports or pull requests. Treat any work done here as local/private. Do not open upstream
-issues or PRs, and do not prepare changes framed as upstream submissions. Contributions are made
-under the zlib license, and the author must confirm they wrote them.
+This is `bgyss/SDL`, an independent fork of SDL3. It is a test bed for agent-driven
+engineering: formal verification (Lean 4, TLA+), fuzzing, bug fixing, and later optimization
+work, done mostly by LLM agents. It has no expectation of staying in sync with upstream or of
+sending anything back.
+
+- **Changes to `src/` are welcome.** Fix bugs, harden code, and optimize. A fix for a finding in
+  `verification/FINDINGS.md` cites the finding ID, adds a test (`test/testautomation_*.c`, or a
+  fuzz regression input), and updates the finding's status. Where a Lean or TLA+ model covers
+  the code, update the model so it describes the code as it now is (`verification/PLAN.md`,
+  "Fork policy").
+- **Reproduction is automated, never manual.** Every finding has a standalone program in
+  `verification/repro/` and an `EXPECT` line. `mise run repro:verify` builds each program
+  against the pre-fix tree and the current tree (ASan + UBSan). The bug must show on the first
+  and not on the second. Don't hand reproduction steps to a person.
+- **Keep SDL building and its tests passing** (`mise run test`). Public API and ABI changes are
+  allowed, but call them out in the commit message and run `python3 src/dynapi/gendynapi.py`.
+- **Nothing goes upstream.** Upstream SDL's `AGENTS.md` says generative AI must not be used to
+  contribute to SDL, and that AI-generated code or text must not appear in its bug reports or
+  pull requests. So never open upstream issues or PRs, and never frame changes as upstream
+  submissions.
+- Code stays under SDL's zlib license (`LICENSE.txt`).
 
 ## Build
 

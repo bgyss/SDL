@@ -311,7 +311,10 @@ static void io_list_remove(Uint32 id)
             spa_list_remove(&n->link);
 
             if (hotplug_events_enabled) {
-                SDL_AudioDeviceDisconnected(SDL_FindPhysicalAudioDeviceByHandle(PW_ID_TO_HANDLE(id)));
+                // Hold a reference across the call (bgyss/SDL F-021).
+                SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByHandle(PW_ID_TO_HANDLE(id));
+                SDL_AudioDeviceDisconnected(device);
+                UnrefPhysicalAudioDevice(device);
             }
 
             SDL_free(n);
@@ -631,7 +634,10 @@ static void change_default_device(const char *path)
         struct io_node *n, *temp;
         spa_list_for_each_safe (n, temp, &hotplug_io_list, link) {
             if (SDL_strcmp(n->path, path) == 0) {
-                SDL_DefaultAudioDeviceChanged(SDL_FindPhysicalAudioDeviceByHandle(PW_ID_TO_HANDLE(n->id)));
+                // Hold a reference across the call (bgyss/SDL F-021).
+                SDL_AudioDevice *device = SDL_FindAndRefPhysicalAudioDeviceByHandle(PW_ID_TO_HANDLE(n->id));
+                SDL_DefaultAudioDeviceChanged(device);
+                UnrefPhysicalAudioDevice(device);
                 return; // found it, we're done.
             }
         }

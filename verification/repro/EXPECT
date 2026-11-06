@@ -1,0 +1,32 @@
+# What each reproduction must show on the pre-fix tree ("base") and on the current tree
+# ("fixed"). run.sh fails if any outcome differs.
+#
+#   program  finding  base-expectation  fixed-expectation
+#
+# Expectations:
+#   ok                    exit 0, prints "OK:", no sanitizer report
+#   bug                   exit 1, prints "BUG:", no sanitizer report
+#   asan:<kind>@<frame>   AddressSanitizer reports <kind> (a regex prefix; "attempting" is
+#                         ASan's double-free) with <frame> in the stack
+#   ubsan:<text>@<file>   UBSan "runtime error: <text>" at <file> ('_' stands for a space)
+f004_steputf8_null    F-004  asan:heap-buffer-overflow@StepUTF8                       ok
+f004_strcasecmp       F-004  asan:heap-buffer-overflow@SDL_strcasecmp                 ok
+f005_utf8_range       F-005  bug                                                      ok
+f006_gamepad_joy128   F-006  asan:stack-buffer-overflow@SDL_PrivateParseGamepadElement ok
+f007_utf8strlcpy      F-007  bug                                                      ok
+f008_stepback         F-008  bug                                                      ok
+f009_gamepad_empty    F-009  asan:stack-buffer-@SDL_PrivateParseGamepadElement        ok
+f010_wav_channels     F-010  bug                                                      ok
+f011_iconv_bom        F-011  bug                                                      ok
+f012_rect_enclose     F-012  ubsan:signed_integer_overflow@SDL_rect_impl.h            ok
+f013_mapping_empty    F-013  asan:heap-buffer-overflow@CreateMappingString            ok
+f014_rect_line        F-014  ubsan:signed_integer_overflow@SDL_rect_impl.h            ok
+f015_rect_negative    F-015  ubsan:signed_integer_overflow@SDL_rect_impl.h            ok
+f015_rect_union       F-015  ubsan:signed_integer_overflow@SDL_rect_impl.h            ok
+f016_wav_blockalign   F-016  bug                                                      ok
+f017_bmp_rle          F-017  ubsan:pointer@SDL_bmp.c                                  ok
+f018_bmp_int_min      F-018  ubsan:negation@SDL_bmp.c                                 ok
+f019_lost_wakeup      F-019  bug                                                      ok
+f020_audio_lookup_uaf F-020  asan:heap-use-after-free|attempting@SDL_GetAudioDeviceFormat ok
+f021_audio_find_by_handle F-021 asan:heap-use-after-free|attempting@backend_device_removed ok
+f022_gamepad_axis_overflow F-022 asan:heap-buffer-overflow@SDL_PrivateLoadButtonMapping ok
