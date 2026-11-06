@@ -14,18 +14,19 @@ Status values:
   fuzz regression input (if any) passes with `SDL_FUZZ_KNOWN=1`.
 
 The 2026-11-05 run of `mise run repro:verify` (Apple M-series, macOS 27.3, Apple clang 21.0.0;
-base `cb6224d2e`, fixed = this branch) matched `EXPECT` for all 21 programs on both trees. F-023 and F-024 (2026-11-06) added two
-more; the current suite has 23.
+base `cb6224d2e`, fixed = this branch) matched `EXPECT` for all 21 programs on both trees. F-023 – F-025 (2026-11-06) added three
+more; the current suite has 24.
 
 ---
 
-## Summary of F-004 – F-024 (2026-11-05, F-023/F-024 on 2026-11-06)
+## Summary of F-004 – F-025 (2026-11-05; F-023 – F-025 on 2026-11-06)
 
 Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-020 in
-`cce7d368b`, and F-021 – F-024 each in their own commit.
+`cce7d368b`, and F-021 – F-025 each in their own commit.
 
 | ID | Where | What | Reproduction on `cb6224d2e` (`repro/`) | Severity |
 |---|---|---|---|---|
+| F-025 | `CreateMappingString` (`SDL_GetGamepadMapping`) | report cut at a second `platform:`; does not round-trip | `f025_mapping_roundtrip`: 2 bindings → 1 | low |
 | F-024 | `SDL_CreateSurface` | pitch above INT_MAX stored as a negative `int` | `f024_surface_pitch_overflow`: pitch -2147483648 | moderate |
 | F-023 | `SDL_LoadBMP_IO` (and every `int` `h * pitch`) | surfaces ≥ 2 GiB overflow `h * pitch`; the load "succeeds" with uninitialized pixels | `f023_bmp_size_overflow`: UBSan signed overflow | moderate |
 | F-022 | `SDL_PrivateParseGamepadElement` / `SDL_PrivateLoadButtonMapping`, joystick getters | mapping index too large for an int becomes -1; `axes[-1]` read and written | `f022_gamepad_axis_overflow`: ASan heap-buffer-overflow | low–moderate |
@@ -46,6 +47,50 @@ Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-
 | F-017, F-018 | `SDL_LoadBMP_IO` | RLE row pointer leaves the buffer (UB); `-INT_MIN` height (UB) | `f017_bmp_rle`, `f018_bmp_int_min`: UBSan | low |
 
 F-004 also gained reach: `SDL_strcasecmp` and `SDL_utf8strlen` hit the same over-read (see F-004).
+
+## R-2 · Gamepad mapping strings: the parser's grammar, buffer bounds and round trip (Lean)
+
+**Status:** proved in `lean/SDLVerif/GamepadMapping.lean` for the code since F-006/F-009/F-022/F-025.
+The model is tied to the real parser by `test/gamepad_diff.sh` (part of `mise run lean:diff`).
+On SDL's own mapping database (174 mappings) and 20,000 generated bodies, the model's bindings
+equal what `SDL_GetGamepadBindings` reports, exactly. Breaking the model's `~` handling makes the
+test fail on a database mapping. 3 proof mutants are all caught.
+
+- `parse_buffers_bounded` (F-006): every state the character loop reaches keeps both buffers
+  NUL-terminated, so the element parser's `SDL_strlen` calls stay inside `szGameButton[20]`
+  and `szJoystickButton[128]`.
+- `loopC_spaces`: spaces anywhere in a body are ignored.
+- `parse_wellformed` (**the grammar**): take a body of elements `name:binding,`, where neither
+  part contains `:`, `,`, a space or NUL, and the parts fit their buffers. It parses to exactly
+  the bindings of its elements, in order, without duplicates.
+- `report_roundtrip` (F-025): parsing what `SDL_GetGamepadMapping` reports gives the bindings
+  of the mapping actually in use. `prefix_report_loses_bindings` is the counterexample for the
+  old report.
+- **Modelled as observed, not specified** (documented quirks, not bugs):
+  - `:` resets the write index without clearing the buffer, so `a:b1:2` overwrites in place.
+  - Junk after a number is accepted (`a3xyz` is axis 3).
+  - An axis name may carry two signs (`++leftx`).
+  - Names compare ASCII-case-insensitively in the model. The C's `SDL_strcasecmp` also folds
+    some non-ASCII characters, so the differential test uses ASCII only.
+
+## F-025 · Gamepad: `SDL_GetGamepadMapping` cut the report at a second `platform:`
+
+**Status:** reproduced and fixed. Found by the gamepad differential test (R-2): 111 of 20,174
+cases disagreed, all with two `platform:` fields. Severity: low. The reported mapping did not
+match the bindings in use, so setting it back changed the gamepad.
+
+**Code:** `CreateMappingString` (`SDL_gamepad.c`, added upstream in 2021 to "trim any extra
+platform strings") ended the reported string at a second `platform:`. Everything after it was
+dropped from the report, including later elements and the `crc` field, while the gamepad kept
+those bindings.
+
+**Reproduction:** `repro/f025_mapping_roundtrip`. `x:b1,platform:A,platform:B,y:b2,` gives 2
+bindings. SDL reports `x:b1,platform:A,`, and setting that back leaves 1.
+
+**Fix:** report the mapping exactly as used. `CreateMappingString` appends a platform only when
+there is none, so it never adds a duplicate itself. Trimming just the extra fields would still
+change the parse when a `platform:` value is long enough to make the parser stop. Test:
+`testautomation` `joystick_testMappingRoundTrip`. Model: `report_roundtrip`.
 
 ## F-024 · Surfaces: a pitch above INT_MAX was stored as a negative `int`
 

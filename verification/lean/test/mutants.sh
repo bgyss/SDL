@@ -41,6 +41,10 @@ mutants=(
   # Header.lean: BMP/WAV header arithmetic (F-023/F-024)
   "int_max_is_uint_max|Header|s/def INT_MAX : Nat := 2147483647/def INT_MAX : Nat := 4294967295/"
   "pitch_not_aligned|Header|s/def rgbPitch \(w : Nat\) \(bitsPP : Nat\) : Nat := \(rawPitch w bitsPP \+ 3\) \/ 4 \* 4/def rgbPitch (w : Nat) (bitsPP : Nat) : Nat := rawPitch w bitsPP/"
+  # GamepadMapping.lean: the mapping-string parser (F-006 bound, spaces, F-025 report)
+  "gamepad_prefix_f006_bound|GamepadMapping|s/    if st.i ≥ GAME_SIZE - 1 then .inr st.binds/    if st.i ≥ GAME_SIZE then .inr st.binds/"
+  "gamepad_spaces_are_chars|GamepadMapping|s/  else if c = ' ' then .inl st/  else if False then .inl st/"
+  "report_no_separator|GamepadMapping|s/  else stored \+\+ \(if stored ≠ \[\] ∧ stored.getLast\? ≠ some ',' then \[','\] else \[\]\) \+\+/  else stored ++ ([] : List Char) ++/"
 )
 
 status=0

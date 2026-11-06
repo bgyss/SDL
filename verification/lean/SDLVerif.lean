@@ -5,3 +5,4 @@ import SDLVerif.Utf8Fixed
 import SDLVerif.Rect
 import SDLVerif.RectLine
 import SDLVerif.Header
+import SDLVerif.GamepadMapping

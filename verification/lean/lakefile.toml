@@ -1,6 +1,6 @@
 name = "SDLVerif"
 version = "0.1.0"
-defaultTargets = ["SDLVerif", "utf8-diff", "utf8-corpus", "rect-diff"]
+defaultTargets = ["SDLVerif", "utf8-diff", "utf8-corpus", "rect-diff", "gamepad-diff"]
 
 [[lean_lib]]
 name = "SDLVerif"
@@ -20,3 +20,8 @@ root = "test.Utf8Corpus"
 [[lean_exe]]
 name = "rect-diff"
 root = "test.RectDiff"
+
+# Recomputes the bindings of gamepad mappings with the Lean model (see test/gamepad_diff.sh).
+[[lean_exe]]
+name = "gamepad-diff"
+root = "test.GamepadDiff"
