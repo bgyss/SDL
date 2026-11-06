@@ -36,12 +36,20 @@ costly:
 
 ## Ground rules
 
-- **Fork only.** Upstream policy forbids AI-generated contributions (RESEARCH §8). All of this
-  stays under `verification/` in `bgyss/SDL`. A finding goes upstream only if a human reproduces
-  it on a real build and writes the report or fix in their own words.
-- **No `src/` edits in a proof change.** Proofs and specs refer to a pinned SDL commit, recorded
-  in `TRUSTED_BASE.md`. A C change that a proof needs is a separate, human-reviewed patch that
-  states which inputs change behaviour.
+- **Fork only.** Upstream policy forbids AI-generated contributions (RESEARCH §8). Nothing here
+  goes upstream. A finding goes upstream only if a human reproduces it on a real build and
+  writes the report or fix in their own words.
+- **Fork policy (since 2026-11-05): the fork fixes its own bugs.** `bgyss/SDL` is an independent,
+  agent-driven test bed (see CLAUDE.md), so findings are fixed in `src/`. A fix:
+  - is its own commit, citing the finding ID
+  - states which inputs change behaviour; where a model exists, the model's patch-audit
+    theorem or fix config is that statement
+  - adds a test (`testautomation`) or keeps the fuzz regression input, which must then pass
+    with `SDL_FUZZ_KNOWN=1`
+  - moves the model forward: the Lean/TLA+ "real code" model becomes the fixed one, and the
+    pre-fix model is kept as the record of the finding.
+- **Proofs and specs name the SDL sources they describe.** Each model records the commit it
+  transcribes (TRUSTED_BASE.md). A proof change and a `src/` change go in separate commits.
 - **Every property must be able to fail.** For each TLA+ invariant or temporal property, commit a
   seeded mutant spec that violates it. TLC coverage must show every action enabled. For each Lean
   theorem about the C, keep a differential test that fails on a mutated C build.
@@ -262,6 +270,7 @@ go/no-go write-up.
 ## Open decisions for the user
 
 1. Whether any confirmed finding is reported upstream, and by whom (RESEARCH §8, open question 7).
+   (The fork fixes them itself either way; see "Fork policy".)
 2. Whether to add Apalache for symbolic checking with larger bounds than TLC can handle. It
    isn't in nixpkgs as far as checked, so it would need a pinned fetch in the flake.
 3. Whether Phase 6 is in scope at all.
