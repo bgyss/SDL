@@ -14,14 +14,16 @@ sending anything back.
   fuzz regression input), and updates the finding's status. Where a Lean or TLA+ model covers
   the code, update the model so it describes the code as it now is (`verification/PLAN.md`,
   "Fork policy").
+- **Reproduction is automated, never manual.** Every finding has a standalone program in
+  `verification/repro/` and an `EXPECT` line. `mise run repro:verify` builds each program
+  against the pre-fix tree and the current tree (ASan + UBSan). The bug must show on the first
+  and not on the second. Don't hand reproduction steps to a person.
 - **Keep SDL building and its tests passing** (`mise run test`). Public API and ABI changes are
   allowed, but call them out in the commit message and run `python3 src/dynapi/gendynapi.py`.
 - **Nothing goes upstream.** Upstream SDL's `AGENTS.md` says generative AI must not be used to
   contribute to SDL, and that AI-generated code or text must not appear in its bug reports or
   pull requests. So never open upstream issues or PRs, and never frame changes as upstream
-  submissions. If a human maintainer of this fork wants to report something upstream, they
-  reproduce it and write it up themselves. `verification/HUMAN_REPRO.md` is the starting
-  point for that.
+  submissions.
 - Code stays under SDL's zlib license (`LICENSE.txt`).
 
 ## Build
