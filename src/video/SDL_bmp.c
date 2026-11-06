@@ -174,7 +174,7 @@ static void CorrectAlphaChannel(SDL_Surface *surface)
     int alphaChannelOffset = 3;
 #endif
     Uint8 *alpha = ((Uint8 *)surface->pixels) + alphaChannelOffset;
-    Uint8 *end = alpha + surface->h * surface->pitch;
+    Uint8 *end = alpha + (size_t)surface->h * (size_t)surface->pitch;  // not int: bgyss/SDL F-023
 
     while (alpha < end) {
         if (*alpha != 0) {
@@ -532,7 +532,8 @@ SDL_Surface *SDL_LoadBMP_IO(SDL_IOStream *src, bool closeio)
         goto done;
     }
     top = (Uint8 *)surface->pixels;
-    end = (Uint8 *)surface->pixels + (surface->h * surface->pitch);
+    // In size_t: `h * pitch` in int overflowed for surfaces of 2 GiB or more (bgyss/SDL F-023).
+    end = (Uint8 *)surface->pixels + (size_t)surface->h * (size_t)surface->pitch;
     pad = ((surface->pitch % 4) ? (4 - (surface->pitch % 4)) : 0);
     if (topDown) {
         bits = top;
@@ -869,7 +870,7 @@ static bool SDL_SaveBMP_IO_Internal(BMPSaveState *state, SDL_IOStream *dst, bool
         }
 
         // Write the bitmap image upside down
-        bits = (Uint8 *)state->intermediate_surface->pixels + (state->intermediate_surface->h * state->intermediate_surface->pitch);
+        bits = (Uint8 *)state->intermediate_surface->pixels + (size_t)state->intermediate_surface->h * (size_t)state->intermediate_surface->pitch;  // bgyss/SDL F-023
         pad = ((bw % 4) ? (4 - (bw % 4)) : 0);
         while (bits > (Uint8 *)state->intermediate_surface->pixels) {
             bits -= state->intermediate_surface->pitch;

@@ -157,6 +157,9 @@ typedef struct SDL_Surface SDL_Surface;
  *
  * The pixels of the new surface are initialized to zero.
  *
+ * The surface's pitch and its total size in bytes (height * pitch) must each
+ * fit in an int; larger surfaces are not created.
+ *
  * \param width the width of the surface.
  * \param height the height of the surface.
  * \param format the SDL_PixelFormat for the new surface's pixel format.
@@ -184,6 +187,8 @@ extern SDL_DECLSPEC SDL_Surface * SDLCALL SDL_CreateSurface(int width, int heigh
  *
  * You may pass NULL for pixels and 0 for pitch to create a surface that you
  * will fill in with valid values later.
+ *
+ * The total size in bytes (height * pitch) must fit in an int.
  *
  * \param width the width of the surface.
  * \param height the height of the surface.
