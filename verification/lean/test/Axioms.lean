@@ -138,3 +138,17 @@ open SDLVerif.Header in
 #print axioms wav_divisors_nonzero
 open SDLVerif.Header in
 #print axioms adpcm_frames_fit
+open SDLVerif.Gamepad in
+#print axioms loopC_spaces
+open SDLVerif.Gamepad in
+#print axioms loopC_ok
+open SDLVerif.Gamepad in
+#print axioms parse_buffers_bounded
+open SDLVerif.Gamepad in
+#print axioms parse_wellformed
+open SDLVerif.Gamepad in
+#print axioms report_roundtrip
+open SDLVerif.Gamepad in
+#print axioms prefix_report_loses_bindings
+open SDLVerif.Gamepad in
+#print axioms finish_eq_element

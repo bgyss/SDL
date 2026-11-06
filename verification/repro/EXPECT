@@ -32,3 +32,4 @@ f021_audio_find_by_handle F-021 asan:heap-use-after-free|attempting@backend_devi
 f022_gamepad_axis_overflow F-022 asan:heap-buffer-overflow@SDL_PrivateLoadButtonMapping ok
 f023_bmp_size_overflow F-023 ubsan:signed_integer_overflow@SDL_bmp.c                 ok
 f024_surface_pitch_overflow F-024 bug                                                ok
+f025_mapping_roundtrip F-025 bug                                                     ok
