@@ -1,10 +1,17 @@
 ----------------------------- MODULE EventsWait -----------------------------
 (***************************************************************************)
-(* Model of SDL_WaitEvent's wakeup protocol (src/events/SDL_events.c,      *)
-(* commit cb6224d2e): one thread waiting in SDL_WaitEventTimeout_Device     *)
-(* (:1631-1688) while other threads push events, each push followed by     *)
-(* SDL_SendWakeupEvent (:1166-1182).                                       *)
+(* Model of SDL_WaitEvent's wakeup protocol (src/events/SDL_events.c):     *)
+(* one thread waiting in SDL_WaitEventTimeout_Device (:1631-1688 at        *)
+(* cb6224d2e) while other threads push events, each push followed by       *)
+(* SDL_SendWakeupEvent (:1166-1182). FIX = FALSE is the pre-fix code       *)
+(* (cb6224d2e); FIX = TRUE is the code since cce7d368b (MC_fix.cfg), and   *)
+(* Trace.tla checks real runs of it against this model.                    *)
 (*                                                                         *)
+(* Waiter, entry check in SDL_WaitEventTimeoutNS, before the device loop   *)
+(* (added 2026-11-05, after trace validation showed the model lacked it):  *)
+(*   w_epump  SDL_PumpEventsInternal (native := 0)                         *)
+(*   w_epeep  SDL_PeepEvents(GET) without publishing wakeup_window: take   *)
+(*            an event and return it, or enter the device loop.            *)
 (* Waiter, one loop iteration of SDL_WaitEventTimeout_Device:              *)
 (*   w_pump   SDL_PumpEventsInternal: the backend handles every pending    *)
 (*            native event, including earlier wakeup events (native := 0). *)
@@ -15,6 +22,12 @@
 (*   w_wait   _this->WaitEventTimeout: block until a native event arrives  *)
 (*            (or, with TIMED, until the timeout).                         *)
 (*   w_clear  SetAtomicPointer(&wakeup_window, NULL)          (:1673)      *)
+(*            then, after a native event, loop (w_pump); after a timeout,  *)
+(*            return to the application (w_epump).                         *)
+(*   w_untake (FIX only) after taking an event, the fixed code clears      *)
+(*            wakeup_window in a separate step before returning. A         *)
+(*            producer may swap the window in between and post a           *)
+(*            wakeup nobody waits for; the next pump drains it.            *)
 (* The application calls SDL_WaitEvent again after each event (or after a  *)
 (* timeout) until it has received one event per producer.                  *)
 (*                                                                         *)
@@ -60,7 +73,7 @@ vars == <<q, ww, native, wpc, ppc, swapped, got>>
 
 Init ==
     /\ q = 0 /\ ww = NULL /\ native = 0 /\ got = 0
-    /\ wpc = "w_pump"
+    /\ wpc = "w_epump"
     /\ ppc = [p \in Producers |-> IF MUTANT = "wake_before_push" THEN "p_swap" ELSE "p_push"]
     /\ swapped = [p \in Producers |-> NULL]
 
@@ -72,6 +85,29 @@ pushed == Cardinality({p \in Producers :
 (* Waiter *)
 
 AfterPump == IF FIX THEN "w_set" ELSE "w_peep"
+\* Where the waiter goes after returning an event to the application, which calls again.
+AfterReturn == IF got' >= N THEN "w_done" ELSE "w_epump"
+
+\* SDL_WaitEventTimeoutNS: pump, then look at the queue once before the device loop.
+WEPump ==
+    /\ wpc = "w_epump"
+    /\ native' = 0
+    /\ wpc' = "w_epeep"
+    /\ UNCHANGED <<q, ww, ppc, swapped, got>>
+
+WEPeepTake ==
+    /\ wpc = "w_epeep"
+    /\ q > 0
+    /\ q' = q - 1
+    /\ got' = got + 1
+    /\ wpc' = AfterReturn
+    /\ UNCHANGED <<ww, native, ppc, swapped>>
+
+WEPeepEmpty ==
+    /\ wpc = "w_epeep"
+    /\ (q = 0 \/ MUTANT = "peep_may_skip")
+    /\ wpc' = "w_pump"
+    /\ UNCHANGED <<q, ww, native, ppc, swapped, got>>
 
 WPump ==
     /\ wpc = "w_pump"
@@ -85,10 +121,15 @@ WPeepTake ==
     /\ q > 0
     /\ q' = q - 1
     /\ got' = got + (IF MUTANT = "take_twice" THEN 2 ELSE 1)
-    \* With FIX the waiter published wakeup_window first; it clears it on the way out.
-    /\ ww' = IF FIX THEN NULL ELSE ww
-    /\ wpc' = IF got' >= N THEN "w_done" ELSE "w_pump"
-    /\ UNCHANGED <<native, ppc, swapped>>
+    \* With FIX the waiter published wakeup_window first; it clears it on the way out (w_untake).
+    /\ wpc' = IF FIX THEN "w_untake" ELSE AfterReturn
+    /\ UNCHANGED <<ww, native, ppc, swapped>>
+
+WUntake ==
+    /\ wpc = "w_untake"
+    /\ ww' = NULL
+    /\ wpc' = IF got >= N THEN "w_done" ELSE "w_epump"
+    /\ UNCHANGED <<q, native, ppc, swapped, got>>
 
 WPeepEmpty ==
     /\ wpc = "w_peep"
@@ -114,7 +155,7 @@ WEnter ==
 WWaitNative ==
     /\ wpc = "w_wait"
     /\ native > 0
-    /\ wpc' = "w_clear"
+    /\ wpc' = "w_clear_loop"
     /\ UNCHANGED <<q, ww, native, ppc, swapped, got>>
 
 \* ... or, for a timed wait, when the timeout expires (SDL_WaitEventTimeout returns false and
@@ -122,16 +163,18 @@ WWaitNative ==
 WWaitTimeout ==
     /\ wpc = "w_wait"
     /\ TIMED
-    /\ wpc' = "w_clear"
+    /\ wpc' = "w_clear_ret"
     /\ UNCHANGED <<q, ww, native, ppc, swapped, got>>
 
+\* After a native event the device loop goes round again; after a timeout it returns.
 WClear ==
-    /\ wpc = "w_clear"
+    /\ wpc \in {"w_clear_loop", "w_clear_ret"}
     /\ ww' = NULL
-    /\ wpc' = "w_pump"
+    /\ wpc' = IF wpc = "w_clear_loop" THEN "w_pump" ELSE "w_epump"
     /\ UNCHANGED <<q, native, ppc, swapped, got>>
 
-Waiter == WPump \/ WPeepTake \/ WPeepEmpty \/ WSet \/ WEnter \/ WWaitNative \/ WWaitTimeout \/ WClear
+Waiter == WEPump \/ WEPeepTake \/ WEPeepEmpty \/ WPump \/ WPeepTake \/ WUntake \/ WPeepEmpty
+          \/ WSet \/ WEnter \/ WWaitNative \/ WWaitTimeout \/ WClear
 
 -----------------------------------------------------------------------------
 (* Producers *)
@@ -179,7 +222,8 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Waiter) /\ \A p \in Producers : WF_vars
 TypeOK ==
     /\ q \in 0..N /\ got \in 0..(2 * N) /\ native \in 0..N
     /\ ww \in {NULL, W}
-    /\ wpc \in {"w_pump", "w_peep", "w_set", "w_enter", "w_wait", "w_clear", "w_done"}
+    /\ wpc \in {"w_epump", "w_epeep", "w_pump", "w_peep", "w_untake", "w_set", "w_enter",
+                "w_wait", "w_clear_loop", "w_clear_ret", "w_done"}
     /\ \A p \in Producers : ppc[p] \in {"p_push", "p_swap", "p_post", "p_done"}
 
 \* Every pushed event is either still queued or was delivered exactly once.

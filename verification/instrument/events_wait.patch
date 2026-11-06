@@ -1,0 +1,131 @@
+--- a/src/events/SDL_events.c
++++ b/src/events/SDL_events.c
+@@ -25,6 +25,7 @@
+ #include "SDL_events_c.h"
+ #include "SDL_eventwatch_c.h"
+ #include "SDL_windowevents_c.h"
++#include "verif_trace.h"
+ #include "../SDL_hints_c.h"
+ #include "../audio/SDL_audio_c.h"
+ #include "../camera/SDL_camera_c.h"
+@@ -1174,9 +1175,19 @@
+     }
+ 
+     // We only want to do this once while waiting for an event, so set it to NULL atomically here
++    SDL_VerifTraceLock();
+     SDL_Window *wakeup_window = (SDL_Window *)SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
++    SDL_VerifTrace("p_swap", 0, wakeup_window ? 1 : 0);
++    SDL_VerifTraceUnlock();
+     if (wakeup_window) {
++        SDL_VerifTraceLock();
+         _this->SendWakeupEvent(_this, wakeup_window);
++        SDL_VerifTrace("p_post", 0, 1);
++        SDL_VerifTraceUnlock();
++    } else {
++        SDL_VerifTraceLock();
++        SDL_VerifTrace("p_post", 0, 0);
++        SDL_VerifTraceUnlock();
+     }
+ #endif
+ }
+@@ -1210,6 +1221,9 @@
+             for (i = 0; i < numevents; ++i) {
+                 used += SDL_AddEvent(&events[i]);
+             }
++            SDL_VerifTraceLock();
++            SDL_VerifTrace("p_push", 0, used);
++            SDL_VerifTraceUnlock();
+         } else {
+             SDL_EventEntry *entry, *next;
+             Uint32 type;
+@@ -1242,6 +1256,11 @@
+                     ++used;
+                 }
+             }
++            if (action == SDL_GETEVENT) {
++                SDL_VerifTraceLock();
++                SDL_VerifTrace("peep_get", 0, used);
++                SDL_VerifTraceUnlock();
++            }
+         }
+     }
+     SDL_UnlockMutex(SDL_EventQ.lock);
+@@ -1641,15 +1660,23 @@
+            c) Periodic processing that takes place in some platform PumpEvents() functions happens
+            d) Signals received in WaitEventTimeout() are turned into SDL events
+         */
++        SDL_VerifTraceRole("w_loop");
+         SDL_PumpEventsInternal(true);
++        SDL_VerifTraceLock();
++        SDL_VerifTrace("w_pump", 0, 0);
++        SDL_VerifTraceUnlock();
+ 
+         /* Publish the window *before* the last look at the queue. An event pushed after the
+            check below then finds wakeup_window set and posts a native wakeup, which the backend
+            keeps until we wait. Publishing after the check lost that wakeup (bgyss/SDL F-019;
+            model: verification/tla/events_wait, MC_fix.cfg). */
++        SDL_VerifTraceLock();
+         SDL_SetAtomicPointer(&_this->wakeup_window, wakeup_window);
++        SDL_VerifTrace("w_set", 0, 0);
++        SDL_VerifTraceUnlock();
+ 
+         status = SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
++        SDL_VerifTraceRole(NULL);
+         if (status < 0) {
+             // Got an error: return
+             SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
+@@ -1657,14 +1684,20 @@
+         }
+         if (status > 0) {
+             // There is an event, we can return.
++            SDL_VerifTraceLock();
+             SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
++            SDL_VerifTrace("w_untake", 0, 0);
++            SDL_VerifTraceUnlock();
+             return 1;
+         }
+         // No events found in the queue, call WaitEventTimeout to wait for an event.
+         if (timeoutNS > 0) {
+             Sint64 elapsed = SDL_GetTicksNS() - start;
+             if (elapsed >= timeoutNS) {
++                SDL_VerifTraceLock();
+                 SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
++                SDL_VerifTrace("w_clear", 0, 0);   // the timeout expired before the wait began
++                SDL_VerifTraceUnlock();
+                 return 0;
+             }
+             loop_timeoutNS = (timeoutNS - elapsed);
+@@ -1677,8 +1710,15 @@
+                 loop_timeoutNS = poll_intervalNS;
+             }
+         }
++        SDL_VerifTraceLock();
++        SDL_VerifTrace("w_enter", 0, 0);
++        SDL_VerifTraceUnlock();
+         status = _this->WaitEventTimeout(_this, loop_timeoutNS);
++        SDL_VerifTraceLock();
++        SDL_VerifTrace("w_wait_ret", 0, status);
+         SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
++        SDL_VerifTrace("w_clear", 0, 0);
++        SDL_VerifTraceUnlock();
+         if (status == 0 && poll_intervalNS != SDL_MAX_SINT64 && loop_timeoutNS == poll_intervalNS) {
+             // We may have woken up to poll. Try again
+             continue;
+@@ -1737,12 +1777,17 @@
+     }
+ 
+     // If there isn't a poll sentinel event pending, pump events and add one
++    SDL_VerifTraceRole("w_entry");
+     if (SDL_GetAtomicInt(&SDL_sentinel_pending) == 0) {
+         SDL_PumpEventsInternal(true);
++        SDL_VerifTraceLock();
++        SDL_VerifTrace("w_pump", 0, 0);
++        SDL_VerifTraceUnlock();
+     }
+ 
+     // First check for existing events
+     result = SDL_PeepEventsInternal(event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST, include_sentinel);
++    SDL_VerifTraceRole(NULL);
+     if (result < 0) {
+         return false;
+     }

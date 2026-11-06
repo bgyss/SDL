@@ -1,7 +1,11 @@
 ---------------------------- MODULE AudioDevice -----------------------------
 (***************************************************************************)
 (* Model of the physical audio device's lifetime against concurrent lookup *)
-(* by instance ID (src/audio/SDL_audio.c, commit cb6224d2e).               *)
+(* by instance ID (src/audio/SDL_audio.c). Line numbers are commit         *)
+(* cb6224d2e, the pre-fix code (FIX = "none"). Since cce7d368b the code is *)
+(* FIX = "try_ref_in_lock" (MC_fix.cfg), in ObtainPhysicalAudioDevice and, *)
+(* since F-021, in SDL_FindAndRefPhysicalAudioDeviceBy{Callback,Handle}.   *)
+(* Trace.tla checks real runs of the current code against it.              *)
 (*                                                                         *)
 (* Lookup, ObtainPhysicalAudioDevice (:481-504), any thread:               *)
 (*   l_find   read-lock subsystem_rwlock, SDL_FindInHashTable, unlock      *)
@@ -29,7 +33,7 @@
 (* "in hash" bit since only this device is involved.                       *)
 (*                                                                         *)
 (* FIX:                                                                    *)
-(*   "none"            the real code                                       *)
+(*   "none"            the pre-fix code (cb6224d2e)                        *)
 (*   "ref_in_lock"     take the reference inside the read-locked find      *)
 (*   "try_ref_in_lock" inside the read lock, take a reference only if the  *)
 (*                     count is not already 0, else treat as not found     *)
@@ -155,7 +159,7 @@ LFind(t) ==
                /\ Goto(t, IF ok THEN "l_use" ELSE "done")
     /\ UNCHANGED <<inhash, freed, ret>>
 
-\* RefPhysicalAudioDevice after the lock was dropped (real code only).
+\* RefPhysicalAudioDevice after the lock was dropped (pre-fix code only).
 LRef(t) ==
     /\ pc[t] = "l_ref"
     /\ rc' = rc + 1
