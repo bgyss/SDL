@@ -400,6 +400,61 @@ static int SDLCALL joystick_testIndexRange(void *arg)
     return TEST_COMPLETED;
 }
 
+/**
+ * SDL_GetGamepadMapping reports the mapping the gamepad uses, even with two platform fields, so
+ * setting it back leaves the gamepad unchanged (bgyss/SDL F-025: the report used to be cut at
+ * the second "platform:").
+ */
+static int SDLCALL joystick_testMappingRoundTrip(void *arg)
+{
+    SDL_VirtualJoystickDesc joystick_desc;
+    SDL_JoystickID joystick_id;
+    SDL_Gamepad *gamepad;
+    char guid_string[33];
+    char mapping_string[256];
+    char *reported = NULL;
+    int before = 0, after = 0;
+
+    SDL_INIT_INTERFACE(&joystick_desc);
+    joystick_desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    joystick_desc.nbuttons = 4;
+    joystick_desc.name = "Virtual round-trip pad";
+    joystick_id = SDL_AttachVirtualJoystick(&joystick_desc);
+    SDLTest_AssertCheck(joystick_id != 0, "SDL_AttachVirtualJoystick()");
+    if (!joystick_id) {
+        return TEST_ABORTED;
+    }
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(joystick_id), guid_string, sizeof(guid_string));
+    SDL_snprintf(mapping_string, sizeof(mapping_string),
+                 "%s,Virtual round-trip pad,x:b1,platform:A,platform:B,y:b2,", guid_string);
+    SDLTest_AssertCheck(SDL_SetGamepadMapping(joystick_id, mapping_string), "SDL_SetGamepadMapping()");
+
+    gamepad = SDL_OpenGamepad(joystick_id);
+    SDLTest_AssertCheck(gamepad != NULL, "SDL_OpenGamepad()");
+    if (gamepad) {
+        SDL_free(SDL_GetGamepadBindings(gamepad, &before));
+        reported = SDL_GetGamepadMapping(gamepad);
+        SDLTest_AssertCheck(reported && SDL_strstr(reported, "y:b2") != NULL,
+                            "The reported mapping keeps the elements after the second platform field: %s",
+                            reported ? reported : "(null)");
+        SDL_CloseGamepad(gamepad);
+    }
+    SDLTest_AssertCheck(before == 2, "Two bindings before the round trip, got %d", before);
+
+    if (reported) {
+        SDLTest_AssertCheck(SDL_SetGamepadMapping(joystick_id, reported), "Set the reported mapping back");
+        gamepad = SDL_OpenGamepad(joystick_id);
+        if (gamepad) {
+            SDL_free(SDL_GetGamepadBindings(gamepad, &after));
+            SDL_CloseGamepad(gamepad);
+        }
+        SDLTest_AssertCheck(after == before, "Bindings unchanged by the round trip: %d -> %d", before, after);
+        SDL_free(reported);
+    }
+    SDLTest_AssertCheck(SDL_DetachVirtualJoystick(joystick_id), "SDL_DetachVirtualJoystick()");
+    return TEST_COMPLETED;
+}
+
 /* ================= Test References ================== */
 
 /* Joystick routine test cases */
@@ -417,12 +472,17 @@ static const SDLTest_TestCaseReference joystickTest4 = {
     joystick_testIndexRange, "joystick_testIndexRange", "Test out-of-range joystick indices (F-022)", TEST_ENABLED
 };
 
+static const SDLTest_TestCaseReference joystickTest5 = {
+    joystick_testMappingRoundTrip, "joystick_testMappingRoundTrip", "Test that the reported gamepad mapping round-trips (F-025)", TEST_ENABLED
+};
+
 /* Sequence of Joystick routine test cases */
 static const SDLTest_TestCaseReference *joystickTests[] = {
     &joystickTest1,
     &joystickTest2,
     &joystickTest3,
     &joystickTest4,
+    &joystickTest5,
     NULL
 };
 

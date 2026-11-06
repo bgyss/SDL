@@ -2747,7 +2747,7 @@ int SDL_AddGamepadMapping(const char *mapping)
  */
 static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
 {
-    char *pMappingString, *pPlatformString;
+    char *pMappingString;
     char pchGUID[33];
     size_t needed;
     bool need_platform = false;
@@ -2786,14 +2786,11 @@ static char *CreateMappingString(GamepadMapping_t *mapping, SDL_GUID guid)
         SDL_strlcat(pMappingString, ",", needed);
     }
 
-    // Make sure multiple platform strings haven't made their way into the mapping
-    pPlatformString = SDL_strstr(pMappingString, SDL_GAMEPAD_PLATFORM_FIELD);
-    if (pPlatformString) {
-        pPlatformString = SDL_strstr(pPlatformString + 1, SDL_GAMEPAD_PLATFORM_FIELD);
-        if (pPlatformString) {
-            *pPlatformString = '\0';
-        }
-    }
+    /* Report the mapping exactly as it is used. This used to cut the string at a second
+       "platform:", which dropped every element after it (and the crc field) from the report
+       while the gamepad kept those bindings, so setting the reported mapping back changed the
+       gamepad (bgyss/SDL F-025). A platform is only appended above when there is none, so this
+       function never adds a duplicate itself. */
     return pMappingString;
 }
 
