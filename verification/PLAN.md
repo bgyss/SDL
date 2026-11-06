@@ -253,7 +253,8 @@ spec validates. Each hypothesis is marked confirmed (with a counterexample trace
 ### Phase 5: Expanding the Lean models
 
 **Status (2026-11-06):** the rect models are done (`Rect.lean`, `RectLine.lean`; FINDINGS
-R-1). The gamepad mapping grammar and the BMP/WAV header arithmetic are next.
+R-1). The BMP/WAV header arithmetic is done (`Header.lean`). Stating it found F-023 and F-024,
+now fixed. The gamepad mapping grammar is next.
 
 - [x] `Rect.lean`: model the integer rect operations in `src/video/SDL_rect_impl.h` (intersect,
   union, enclose points, line clipping) using 32-bit two's-complement arithmetic. Prove the
@@ -264,7 +265,7 @@ R-1). The gamepad mapping grammar and the BMP/WAV header arithmetic are next.
 - [ ] `GamepadMapping.lean`: write a grammar and parser model for mapping strings, plus a
   round-trip property against SDL's mapping-to-string output. Run it differentially against the
   Phase 3 harness.
-- [ ] BMP and WAV header arithmetic: prove that the size and offset computations
+- [x] BMP and WAV header arithmetic (`Header.lean`; found F-023, F-024): prove that the size and offset computations
   cannot overflow or exceed the stream length, for the field ranges the C code accepts.
 - [ ] Extend the shared bit-vector and arithmetic lemmas in `SDLVerif/Common/` as they come up.
 

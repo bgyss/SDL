@@ -38,6 +38,9 @@ mutants=(
   # RectLine.lean: Cohen-Sutherland line clipping
   "clip_top_to_bottom_edge|RectLine|s/  if o.top then \(ix s b.y1, b.y1\)/  if o.top then (ix s b.y2, b.y2)/"
   "interp_wrong_base|RectLine|s/def ix \(s : Seg\) \(y : Int\) : Int := s.x1 \+/def ix (s : Seg) (y : Int) : Int := s.x2 +/"
+  # Header.lean: BMP/WAV header arithmetic (F-023/F-024)
+  "int_max_is_uint_max|Header|s/def INT_MAX : Nat := 2147483647/def INT_MAX : Nat := 4294967295/"
+  "pitch_not_aligned|Header|s/def rgbPitch \(w : Nat\) \(bitsPP : Nat\) : Nat := \(rawPitch w bitsPP \+ 3\) \/ 4 \* 4/def rgbPitch (w : Nat) (bitsPP : Nat) : Nat := rawPitch w bitsPP/"
 )
 
 status=0
