@@ -102,10 +102,10 @@ test/mutants.sh
 '''
 
 [tasks."lean:diff"]
-description = "Differential tests of the Lean models against the real SDL build (boundary grid + fuzz corpus)"
+description = "Differential tests of the Lean models against the real SDL build (UTF-8 grid + fuzz corpus, rect functions)"
 depends = ["build"]
 dir = "verification/lean"
-run = "test/utf8_diff.sh ../../build && test/utf8_corpus.sh ../../build"
+run = "test/utf8_diff.sh ../../build && test/utf8_corpus.sh ../../build && test/rect_diff.sh ../../build 200000"
 
 # Sanitizer builds use Apple's clang: on macOS 27 the nix clang 21 ASan runtime hangs at
 # startup, even for a plain hello world. Inside the dev shell, /usr/bin/clang is an xcrun shim

@@ -27,6 +27,17 @@ mutants=(
   # Utf8Fixed.lean: the fork's fixed SDL_StepBackUTF8
   "stepbackfix_no_span_check|Utf8Fixed|s/if r.cp ≠ 0 ∧ r.adv.toNat ≠ p - q then/if False then/"
   "scanFix_keeps_partial|Utf8String|s/      \(if b ≠ trailingBytes \(byteAt s 0\) \+ 1 then 0 else b\)/      (if b ≠ trailingBytes (byteAt s 0) + 1 then b else b)/"
+  # Rect.lean: the integer rect functions and the F-012/F-015 fixes
+  "guard_no_negative_bound|Rect|s/\(fixed \&\& \(r.w.sle HALF_MIN \|\| r.h.sle HALF_MIN\)\)/(fixed \&\& false)/"
+  "inter_no_clamp|Rect|s/let d := if d.slt \(wide INT_MIN\) then wide INT_MIN else d/let d := d/"
+  "inter_takes_min_origin|Rect|s/let amin := if a.slt b then b else a/let amin := if a.slt b then a else b/"
+  "union_no_span_check|Rect|s/if fixed \&\& \(wide INT_MAX\).slt \(wide amax - wide amin\) then/if false then/"
+  "union_off_by_one|Rect|s/else \(amin, amax - amin, false/else (amin, amax - amin + 1, false/"
+  "enclose_no_span_check|Rect|s/else if fixed \&\& \(\(wide INT_MAX\)/else if false \&\& ((wide INT_MAX)/"
+  "enclose_else_if_drops_max|Rect|0,/\(if px.slt a.minx then a.maxx else if a.maxx.slt px then px else a.maxx\)/s//(if px.slt a.minx then a.maxx else a.maxx)/"
+  # RectLine.lean: Cohen-Sutherland line clipping
+  "clip_top_to_bottom_edge|RectLine|s/  if o.top then \(ix s b.y1, b.y1\)/  if o.top then (ix s b.y2, b.y2)/"
+  "interp_wrong_base|RectLine|s/def ix \(s : Seg\) \(y : Int\) : Int := s.x1 \+/def ix (s : Seg) (y : Int) : Int := s.x2 +/"
 )
 
 status=0

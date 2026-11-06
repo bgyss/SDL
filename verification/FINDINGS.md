@@ -44,6 +44,38 @@ Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-
 
 F-004 also gained reach: `SDL_strcasecmp` and `SDL_utf8strlen` hit the same over-read (see F-004).
 
+## R-1 · The integer rect functions are free of undefined behavior and compute what they claim (Lean)
+
+**Status:** proved (all inputs, no bounds) in `lean/SDLVerif/Rect.lean` and
+`lean/SDLVerif/RectLine.lean`, for the code since `cce7d368b`. The model is tied to the real C
+by `test/rect_diff.sh`: 200,000 cases, the outputs match exactly. 9 proof mutants are all caught.
+
+- **No signed overflow anywhere** (`has_no_ub`, `inter_no_ub`, `union_no_ub`, `enclose_noclip`,
+  `enclose_clip`, and for line clipping `step_ok`/`loop_ok`/`rect_box_ok`). This covers every
+  `int` `+`/`-`, and for line clipping every `Sint64` product (each below 2^62 in magnitude).
+- **Line clipping never divides by zero, and always terminates.** The `SDL_assert(y2 != y1)`
+  and `SDL_assert(x2 != x1)` in the Cohen–Sutherland loop can never fire. A zero divisor would
+  need both outcodes to share a bit, which the loop exits on first. Every clipped point lands
+  inside the segment's bounding box, so all coordinates stay within the endpoint guard. The loop
+  ends within `|x2-x1| + |y2-y1| + 1` iterations, and when it returns true both endpoints are
+  inside the rect.
+- **What the functions compute** on guarded inputs:
+  - The intersection is exact: `inter_sound` (its points are in both rects) and `inter_complete`
+    (every common point is in it). It is commutative (`inter_comm`) and agrees with
+    `SDL_HasRectIntersection` (`has_iff_inter`).
+  - The union contains both non-empty rects and is the tightest such rect (`union_contains`,
+    `union_tight`). It fails exactly when the result would be wider or taller than `INT_MAX`
+    (`union_fails_iff_too_wide`).
+  - The enclosing rect contains every point (inside the clip, if given) and lies inside the
+    clip.
+- **The record of F-012/F-014/F-015** (pre-fix model, `fixed := false`):
+  - `has_prefix_ub_only_unguarded`: the old `SDL_HasRectIntersection` overflowed only on inputs
+    the new guard rejects.
+  - `inter_prefix_ub_under_fixed_guard`: the old `SDL_GetRectIntersection` could overflow even on
+    rects that pass the *new* guard, which is why the fix also computes the size in 64 bits.
+  - `inter_fix_audit`, `union_fix_audit`: wherever the old code was defined and the new guard
+    accepts, the fixed functions return exactly what the old ones did.
+
 ## F-022 · Gamepad: a joystick index too large for an int indexes `axes[-1]`
 
 **Status:** reproduced and fixed. Found by `fuzz_gamepad` on the *fixed* tree in the fresh

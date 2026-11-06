@@ -1,6 +1,6 @@
 name = "SDLVerif"
 version = "0.1.0"
-defaultTargets = ["SDLVerif", "utf8-diff", "utf8-corpus"]
+defaultTargets = ["SDLVerif", "utf8-diff", "utf8-corpus", "rect-diff"]
 
 [[lean_lib]]
 name = "SDLVerif"
@@ -15,3 +15,8 @@ root = "test.Utf8Diff"
 [[lean_exe]]
 name = "utf8-corpus"
 root = "test.Utf8Corpus"
+
+# Recomputes the rect functions' outputs with the Lean models (see test/rect_diff.sh).
+[[lean_exe]]
+name = "rect-diff"
+root = "test.RectDiff"

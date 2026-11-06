@@ -252,7 +252,10 @@ spec validates. Each hypothesis is marked confirmed (with a counterexample trace
 
 ### Phase 5: Expanding the Lean models
 
-- [ ] `Rect.lean`: model the integer rect operations in `src/video/SDL_rect_impl.h` (intersect,
+**Status (2026-11-06):** the rect models are done (`Rect.lean`, `RectLine.lean`; FINDINGS
+R-1). The gamepad mapping grammar and the BMP/WAV header arithmetic are next.
+
+- [x] `Rect.lean`: model the integer rect operations in `src/video/SDL_rect_impl.h` (intersect,
   union, enclose points, line clipping) using 32-bit two's-complement arithmetic. Prove the
   algebraic properties (intersection is commutative and contained in both inputs, union contains
   both inputs, clipped line endpoints lie inside the rect). Characterize the inputs where the C
