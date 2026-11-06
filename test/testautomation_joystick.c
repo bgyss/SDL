@@ -341,6 +341,65 @@ static int SDLCALL joystick_testMissingAxes(void *arg)
     return TEST_COMPLETED;
 }
 
+/**
+ * Joystick indices out of range: negative indices passed to the joystick getters, and mapping
+ * numbers too large for an int (bgyss/SDL F-022). Under ASan, the old code read and wrote
+ * joystick->axes[-1] here.
+ */
+static int SDLCALL joystick_testIndexRange(void *arg)
+{
+    SDL_VirtualJoystickDesc joystick_desc;
+    SDL_JoystickID joystick_id = 0;
+    SDL_Joystick *joystick = NULL;
+    SDL_Gamepad *gamepad = NULL;
+    char guid_string[33] = {0};
+    char mapping_string[256] = {0};
+    Sint16 initial = 0;
+    int dx = 0, dy = 0;
+
+    SDL_INIT_INTERFACE(&joystick_desc);
+    joystick_desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    joystick_desc.naxes = 2;
+    joystick_desc.nbuttons = 2;
+    joystick_desc.nhats = 1;
+    joystick_desc.nballs = 1;
+    joystick_desc.name = "Virtual index-range pad";
+    joystick_id = SDL_AttachVirtualJoystick(&joystick_desc);
+    SDLTest_AssertCheck(joystick_id != 0, "SDL_AttachVirtualJoystick()");
+    if (!joystick_id) {
+        return TEST_ABORTED;
+    }
+
+    joystick = SDL_OpenJoystick(joystick_id);
+    SDLTest_AssertCheck(joystick != NULL, "SDL_OpenJoystick()");
+    if (joystick) {
+        SDLTest_AssertCheck(SDL_GetJoystickAxis(joystick, -1) == 0, "SDL_GetJoystickAxis(-1) == 0");
+        SDLTest_AssertCheck(!SDL_GetJoystickAxisInitialState(joystick, -1, &initial), "SDL_GetJoystickAxisInitialState(-1) fails");
+        SDLTest_AssertCheck(SDL_GetJoystickHat(joystick, -1) == 0, "SDL_GetJoystickHat(-1) == 0");
+        SDLTest_AssertCheck(!SDL_GetJoystickBall(joystick, -1, &dx, &dy), "SDL_GetJoystickBall(-1) fails");
+        SDLTest_AssertCheck(!SDL_GetJoystickButton(joystick, -1), "SDL_GetJoystickButton(-1) is false");
+        SDLTest_AssertCheck(SDL_GetJoystickAxis(joystick, SDL_MIN_SINT32) == 0, "SDL_GetJoystickAxis(INT_MIN) == 0");
+        SDL_CloseJoystick(joystick);
+    }
+
+    /* An axis number that does not fit in an int must not become a valid (or negative) index. */
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(joystick_id), guid_string, sizeof(guid_string));
+    SDL_snprintf(mapping_string, sizeof(mapping_string),
+                 "%s,Virtual index-range pad,a:b0,lefttrigger:a99999999999999999999,"
+                 "righttrigger:a4294967295,b:b4294967296,", guid_string);
+    SDLTest_AssertCheck(SDL_SetGamepadMapping(joystick_id, mapping_string), "SDL_SetGamepadMapping()");
+    gamepad = SDL_OpenGamepad(joystick_id);
+    SDLTest_AssertCheck(gamepad != NULL, "SDL_OpenGamepad()");
+    if (gamepad) {
+        SDLTest_AssertCheck(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) == 0, "Overflowing left trigger binding is ignored");
+        SDLTest_AssertCheck(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) == 0, "Overflowing right trigger binding is ignored");
+        SDLTest_AssertCheck(!SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST), "Overflowing button binding is ignored");
+        SDL_CloseGamepad(gamepad);
+    }
+    SDLTest_AssertCheck(SDL_DetachVirtualJoystick(joystick_id), "SDL_DetachVirtualJoystick()");
+    return TEST_COMPLETED;
+}
+
 /* ================= Test References ================== */
 
 /* Joystick routine test cases */
@@ -354,11 +413,16 @@ static const SDLTest_TestCaseReference joystickTest3 = {
     joystick_testMissingAxes, "joystick_testMissingAxes", "Test mappings with missing joystick axes", TEST_ENABLED
 };
 
+static const SDLTest_TestCaseReference joystickTest4 = {
+    joystick_testIndexRange, "joystick_testIndexRange", "Test out-of-range joystick indices (F-022)", TEST_ENABLED
+};
+
 /* Sequence of Joystick routine test cases */
 static const SDLTest_TestCaseReference *joystickTests[] = {
     &joystickTest1,
     &joystickTest2,
     &joystickTest3,
+    &joystickTest4,
     NULL
 };
 

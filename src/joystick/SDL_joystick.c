@@ -2280,7 +2280,7 @@ Sint16 SDL_GetJoystickAxis(SDL_Joystick *joystick, int axis)
     {
         CHECK_JOYSTICK_MAGIC(joystick, 0);
 
-        if (axis < joystick->naxes) {
+        if (axis >= 0 && axis < joystick->naxes) {  // a negative index read before the array (bgyss/SDL F-022)
             state = joystick->axes[axis].value;
         } else {
             SDL_SetError("Joystick only has %d axes", joystick->naxes);
@@ -2303,7 +2303,7 @@ bool SDL_GetJoystickAxisInitialState(SDL_Joystick *joystick, int axis, Sint16 *s
     {
         CHECK_JOYSTICK_MAGIC(joystick, false);
 
-        if (axis >= joystick->naxes) {
+        if (axis < 0 || axis >= joystick->naxes) {  // bgyss/SDL F-022
             SDL_SetError("Joystick only has %d axes", joystick->naxes);
             result = false;
         } else {
@@ -2329,7 +2329,7 @@ Uint8 SDL_GetJoystickHat(SDL_Joystick *joystick, int hat)
     {
         CHECK_JOYSTICK_MAGIC(joystick, 0);
 
-        if (hat < joystick->nhats) {
+        if (hat >= 0 && hat < joystick->nhats) {  // bgyss/SDL F-022
             state = joystick->hats[hat];
         } else {
             SDL_SetError("Joystick only has %d hats", joystick->nhats);
@@ -2352,7 +2352,7 @@ bool SDL_GetJoystickBall(SDL_Joystick *joystick, int ball, int *dx, int *dy)
     {
         CHECK_JOYSTICK_MAGIC(joystick, false);
 
-        if (ball < joystick->nballs) {
+        if (ball >= 0 && ball < joystick->nballs) {  // bgyss/SDL F-022
             if (dx) {
                 *dx = joystick->balls[ball].dx;
             }
@@ -2382,7 +2382,7 @@ bool SDL_GetJoystickButton(SDL_Joystick *joystick, int button)
     {
         CHECK_JOYSTICK_MAGIC(joystick, false);
 
-        if (button < joystick->nbuttons) {
+        if (button >= 0 && button < joystick->nbuttons) {  // bgyss/SDL F-022
             down = joystick->buttons[button];
         } else {
             SDL_SetError("Joystick only has %d buttons", joystick->nbuttons);
