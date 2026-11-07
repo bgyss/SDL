@@ -290,9 +290,11 @@ Uint32 SDL_StepBackUTF8(const char *start, const char **pstr)
     size_t length = (*pstr - str);
     const char *decoded = str;
     const Uint32 result = StepUTF8(&decoded, length);
-    if (result != 0 && (size_t)(decoded - str) != length) {
+    if ((size_t)(decoded - str) != length && (result != 0 || length != 1)) {
         // The bytes we walked back over are not one character: report the last byte as invalid
-        // instead of silently skipping the stray trailing bytes (bgyss/SDL F-008).
+        // instead of silently skipping the stray trailing bytes (bgyss/SDL F-008). A NUL is one
+        // character too, so stray trailing bytes after a NUL are reported the same way (F-026);
+        // only a lone NUL byte steps back with result 0.
         *pstr -= 1;
         return SDL_INVALID_UNICODE_CODEPOINT;
     }
@@ -387,7 +389,8 @@ static size_t SDL_ScanUnsignedLongLongInternal(const char *text, int count, int 
             text += 2;
             radix = 16;
         } else if (radix == 0 && *text == '0' && (text[1] >= '0' && text[1] <= '9')) {
-            ++text;
+            // Leave the '0' to be parsed as an octal digit: "08" is the number 0 followed by '8'
+            // (bgyss/SDL F-027).
             radix = 8;
         } else if (radix == 0) {
             radix = 10;
@@ -395,7 +398,7 @@ static size_t SDL_ScanUnsignedLongLongInternal(const char *text, int count, int 
         number_start = text;
         do {
             unsigned long long digit;
-            if (*text >= '0' && *text <= '9') {
+            if (*text >= '0' && *text <= '9' && *text - '0' < radix) { // bgyss/SDL F-027: only digits of this base
                 digit = *text - '0';
             } else if (radix > 10) {
                 if (*text >= 'A' && *text < 'A' + (radix - 10)) {
@@ -479,7 +482,8 @@ static size_t SDL_ScanUnsignedLongLongInternalW(const wchar_t *text, int count, 
             text += 2;
             radix = 16;
         } else if (radix == 0 && *text == '0' && (text[1] >= '0' && text[1] <= '9')) {
-            ++text;
+            // Leave the '0' to be parsed as an octal digit: "08" is the number 0 followed by '8'
+            // (bgyss/SDL F-027).
             radix = 8;
         } else if (radix == 0) {
             radix = 10;
@@ -487,7 +491,7 @@ static size_t SDL_ScanUnsignedLongLongInternalW(const wchar_t *text, int count, 
         number_start = text;
         do {
             unsigned long long digit;
-            if (*text >= '0' && *text <= '9') {
+            if (*text >= '0' && *text <= '9' && *text - '0' < radix) { // bgyss/SDL F-027: only digits of this base
                 digit = *text - '0';
             } else if (radix > 10) {
                 if (*text >= 'A' && *text < 'A' + (radix - 10)) {
@@ -1154,13 +1158,13 @@ char *SDL_strrev(char *string)
     return _strrev(string);
 #else
     size_t len = SDL_strlen(string);
-    char *a = &string[0];
-    char *b = &string[len - 1];
+    char *a = string;
+    char *b = string + len; // one past the last character, so "" never forms &string[-1] (bgyss/SDL F-028)
     len /= 2;
     while (len--) {
         const char c = *a; // NOLINT(clang-analyzer-core.uninitialized.Assign)
-        *a++ = *b;
-        *b-- = c;
+        *a++ = *--b;
+        *b = c;
     }
     return string;
 #endif // HAVE__STRREV
@@ -1302,7 +1306,8 @@ char *SDL_ltoa(long value, char *string, int radix)
 
     if (value < 0) {
         *bufp++ = '-';
-        SDL_ultoa(-value, bufp, radix);
+        // Negate in unsigned arithmetic: -LONG_MIN overflows a long (bgyss/SDL F-029).
+        SDL_ultoa(0UL - (unsigned long)value, bufp, radix);
     } else {
         SDL_ultoa(value, bufp, radix);
     }
@@ -1344,7 +1349,8 @@ char *SDL_lltoa(long long value, char *string, int radix)
 
     if (value < 0) {
         *bufp++ = '-';
-        SDL_ulltoa(-value, bufp, radix);
+        // Negate in unsigned arithmetic: -LLONG_MIN overflows a long long (bgyss/SDL F-029).
+        SDL_ulltoa(0ULL - (unsigned long long)value, bufp, radix);
     } else {
         SDL_ulltoa(value, bufp, radix);
     }
