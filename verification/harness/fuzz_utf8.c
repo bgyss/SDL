@@ -132,8 +132,10 @@ static void check_backward(const Uint8 *s, size_t n, const Uint32 *cps, const si
             adv = 4;
         }
         /* Contract: an invalid sequence gives U+FFFD. F-008: the bytes it skips beyond the
-           decoded character are only ever continuation bytes (proved exact in Lean). */
-        if (cp != 0 && adv != end - q) {
+           decoded character are only ever continuation bytes (proved exact in Lean). F-026: this
+           used to test cp != 0 too, the same gap as the fix it checked; only a lone NUL byte
+           (cp 0, one byte back, no advance) is exempt now. */
+        if (adv != end - q && !(cp == 0 && end - q == 1)) {
             for (size_t i = q + adv; i < end; i++) {
                 PROPERTY(is_cont(s[i]), "StepBackUTF8 skipped non-continuation byte %02X at %zu", s[i], i);
             }

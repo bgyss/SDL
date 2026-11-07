@@ -160,6 +160,10 @@ build/repro_wakeup "${1:-300000}" "${2:-20}" || true
 description = "Reproduce every finding on the pre-fix tree and check the fix removes it (verification/repro): mise run repro:verify -- [program ...]"
 run = "verification/repro/run.sh"
 
+[tasks.cbmc]
+description = "CBMC bounded model checking of src/stdlib on the current, pre-fix and mutated trees (verification/cbmc): mise run cbmc -- [harness ...]"
+run = "verification/cbmc/run.sh"
+
 [tasks.trace]
 description = "TLA+ trace validation: record real runs of the instrumented SDL and replay them in tla/audio_device and tla/events_wait"
 run = '''

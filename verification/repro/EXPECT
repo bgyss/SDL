@@ -33,3 +33,7 @@ f022_gamepad_axis_overflow F-022 asan:heap-buffer-overflow@SDL_PrivateLoadButton
 f023_bmp_size_overflow F-023 ubsan:signed_integer_overflow@SDL_bmp.c                 ok
 f024_surface_pitch_overflow F-024 bug                                                ok
 f025_mapping_roundtrip F-025 bug                                                     ok
+f026_stepback_nul     F-026  bug                                                      ok
+f027_strtol_radix     F-027  bug                                                      ok
+f028_strrev_empty     F-028  ubsan:addition_of_unsigned_offset@SDL_string.c           ok
+f029_ltoa_min         F-029  ubsan:negation@SDL_string.c                              ok

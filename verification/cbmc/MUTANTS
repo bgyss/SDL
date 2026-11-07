@@ -1,0 +1,22 @@
+# Seeded bugs: each line is applied (sed -E) to one file of a copy of this tree, and the harness
+# it names must then fail on a property matching the expectation. run.sh reports a mutant whose
+# expression no longer changes the file, so a mutant cannot go stale silently.
+#
+# Properties not listed here are killed on the base tree instead (EXPECT): F-004 for the
+# StepUTF8(NULL) and strcasecmp memory checks, F-005 for the StepUTF8 decode, F-007 for
+# utf8strlcpy's validity and maximality.
+#
+#   name  harness  file  expectation (one word: write spaces as .)  sed-expression (rest of line)
+strlcpy_no_room_for_nul  strlcpy  src/stdlib/SDL_string.c  fail:strlcpy|bounds  s/size_t len = SDL_min\(srclen, maxlen - 1\);/size_t len = SDL_min(srclen, maxlen);/
+strlcat_one_past  strlcat  src/stdlib/SDL_string.c  fail:strlcat|bounds  s/SDL_strlcpy\(dst \+ dstlen, src, maxlen - dstlen\);/SDL_strlcpy(dst + dstlen, src, maxlen - dstlen + 1);/
+step_4byte_needs_3  steputf8_len  src/stdlib/SDL_string.c  fail:StepUTF8\..*outside.object.bounds  s/\(\(octet & 0xF8\) == 0xF0\) && \(slen >= 4\)/((octet \& 0xF8) == 0xF0) \&\& (slen >= 3)/
+step_overlong_2byte  steputf8_null  src/stdlib/SDL_string.c  fail:StepUTF8\(NULL\):.ill-formed  s/if \(result >= 0x0080\)/if (result >= 0x0040)/
+stepback_f026_reverted  stepbackutf8  src/stdlib/SDL_string.c  fail:steps.over.exactly.one.character  s/if \(\(size_t\)\(decoded - str\) != length && \(result != 0 \|\| length != 1\)\) \{/if (result != 0 \&\& (size_t)(decoded - str) != length) {/
+utf8strlcpy_no_room_for_nul  utf8strlcpy  src/stdlib/SDL_string.c  fail:utf8strlcpy|bounds  s/bytes = SDL_min\(src_bytes, dst_bytes - 1\);/bytes = SDL_min(src_bytes, dst_bytes);/
+strcasecmp_lt_returns_1  strcasecmp  src/stdlib/SDL_string.c  fail:strcasecmp:.swapping  s/^            return -1; \\$/            return 1; \\/
+strtol_octal_as_decimal  strtol  src/stdlib/SDL_string.c  fail:strtol:.value  s/^            radix = 8;$/            radix = 10;/
+ltoa_no_sign  ltoa  src/stdlib/SDL_string.c  fail:ltoa:.a.'-'  s/\*bufp\+\+ = '-';/;/
+strrev_from_nul  strrev  src/stdlib/SDL_string.c  fail:strrev  s/\*a\+\+ = \*--b;/*a++ = *b--;/
+# (strtok_r is not run; see EXPECT)
+# strtok_r_no_advance  strtok_r  src/stdlib/SDL_strtokr.c  fail:strtok_r  s/\*\(\(\*ptr\)\+\+\) = '\\0';/**ptr = '\\0';/
+murmur3_tail_off_by_one  hashes  src/stdlib/SDL_murmur3.c  fail:outside.object.bounds  s/k \|= bytes\[i\];/k |= bytes[i + 1];/

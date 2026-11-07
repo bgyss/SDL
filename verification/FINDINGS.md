@@ -15,7 +15,8 @@ Status values:
 
 The 2026-11-05 run of `mise run repro:verify` (Apple M-series, macOS 27.3, Apple clang 21.0.0;
 base `cb6224d2e`, fixed = this branch) matched `EXPECT` for all 21 programs on both trees. F-023 – F-025 (2026-11-06) added three
-more; the current suite has 24.
+more, and F-026 – F-029 (the CBMC pilot, 2026-11-06) four more; the current suite has 28, and its
+2026-11-06 run matched `EXPECT` for all 28.
 
 ---
 
@@ -47,6 +48,96 @@ Every finding below is **reproduced** on `cb6224d2e` and **fixed**: F-004 – F-
 | F-017, F-018 | `SDL_LoadBMP_IO` | RLE row pointer leaves the buffer (UB); `-INT_MIN` height (UB) | `f017_bmp_rle`, `f018_bmp_int_min`: UBSan | low |
 
 F-004 also gained reach: `SDL_strcasecmp` and `SDL_utf8strlen` hit the same over-read (see F-004).
+
+## CBMC pilot: `src/stdlib/` (2026-11-06)
+
+`verification/cbmc/` (README there) runs CBMC on the C itself. Each harness checks memory safety,
+undefined behaviour and functional assertions for every input within its stated bounds, on the
+current tree and on the base tree `cb6224d2e`.
+
+**Known bugs found again, without being told about them.** On the base tree CBMC reports F-004
+(an out-of-bounds read of `str[2]`/`str[3]`, through both `SDL_StepUTF8(.., NULL)` and
+`SDL_strcasecmp`), F-005 (the reference decoder disagrees above U+10FFFF), F-007 (output that is
+not valid UTF-8) and F-008. Each took seconds to minutes once the harness existed.
+
+**New findings:** F-026 – F-029 below, each reproduced (`repro/`) and fixed.
+
+| ID | Where | What | Reproduction on `cb6224d2e` (`repro/`) | Severity |
+|---|---|---|---|---|
+| F-029 | `SDL_ltoa`, `SDL_lltoa` (all platforms) | `-value` on `LONG_MIN`/`LLONG_MIN`: signed overflow (UB) | `f029_ltoa_min`: UBSan negation | low |
+| F-028 | `SDL_strrev` (all platforms but Windows) | `SDL_strrev("")` forms `&string[-1]` (UB) | `f028_strrev_empty`: UBSan pointer overflow | low |
+| F-027 | `SDL_strtol` family, `SDL_wcstol` family (builds without libc) | digits not valid in the base are accepted; base 0 skips the leading `0` of an octal number | `f027_strtol_radix`: `"19"` in base 2 → 11 | low |
+| F-026 | `SDL_StepBackUTF8` | the F-008 fix misses a walk back that stops on a NUL | `f026_stepback_nul`: `00 BF BF` → 0, 3 bytes back | low |
+
+## F-029 · `SDL_ltoa(LONG_MIN)` overflows
+
+**Status:** reproduced, fixed. Found by `cbmc/harness/ltoa.c`. For every 64-bit `long` in radix
+2, the only failing property on either tree was `arithmetic overflow on signed unary minus in
+-value`; the output format, digits and the `sizeof(long) * 8 + 2` buffer bound all held.
+
+**Code:** `SDL_ltoa` and `SDL_lltoa` (`!HAVE__LTOA`/`!HAVE__I64TOA`, which is every platform)
+call `SDL_ultoa(-value, …)` for negative values. For `LONG_MIN` the negation overflows. In
+practice compilers wrap and the output is right, but it is undefined, and UBSan aborts on it.
+`SDL_itoa` goes through `SDL_ltoa` but cannot reach `LONG_MIN` where `long` is wider than `int`.
+
+**Fix:** negate in unsigned arithmetic, `0UL - (unsigned long)value` (and the `long long`
+equivalent). Test: `stdlib_strlcpy` checks `SDL_ltoa(LONG_MIN)` and `SDL_lltoa(LLONG_MIN)`
+against `SDL_snprintf`.
+
+## F-028 · `SDL_strrev("")` forms a pointer before the string
+
+**Status:** reproduced, fixed. Found by `cbmc/harness/strrev.c` (`pointer arithmetic: pointer
+outside object bounds in string + (len - 1)`), on both trees.
+
+**Code** (`SDL_string.c`, `SDL_strrev`, the `!HAVE__STRREV` branch, used everywhere but
+Windows): `char *b = &string[len - 1];` with `len == 0` computes `string + SIZE_MAX`, i.e.
+one before the array. C11 6.5.6p8 makes forming it undefined, even though the loop never
+dereferences it. `SDL_ultoa` never passes `""`, but any caller of the public function can.
+
+**Fix:** `b` starts one past the last character and the loop pre-decrements it, so no pointer
+outside `[string, string + len]` is formed. Test: `stdlib_strlcpy` in `testautomation_stdlib.c`
+reverses `""`, `"abc"` and `"abcd"`.
+
+## F-027 · SDL's own `strtol` accepts digits outside the base
+
+**Status:** reproduced, fixed. Found by `cbmc/harness/strtol.c`, which compares
+`SDL_strtol` with a reference written from C11 7.22.1.4. Counterexample: `"\v\v\v8"` in base 8
+returned 8 and consumed 4 bytes; C gives 0 and leaves `endp` at the start.
+
+**Code** (`SDL_ScanUnsignedLongLongInternal` and its wide copy `…InternalW`): a character
+`'0'`–`'9'` was taken as a digit whatever the radix, so `"19"` in base 2 is 1·2 + 9 = 11. Base 0
+with a leading `0` also stepped over that `0` before parsing, so once digits are checked, `"08"`
+would report "no number" instead of the octal `0`.
+
+**Reach:** only builds whose config lacks `HAVE_STRTOL`/`HAVE_STRTOUL`/… or `HAVE_WCSTOL`/…, or
+`HAVE_VSSCANF` (`SDL_sscanf` uses the same scanner): `SDL_LIBC=OFF` and similar. Every shipped
+platform config forwards to libc, so on those the public functions were already right. The repro
+therefore compiles `SDL_string.c` itself with the minimal config (see the file).
+
+**Fix:** a digit `'0'`–`'9'` must be below the radix, in both scanners; base-0 octal keeps the
+leading `0` as its first digit. Tests: `stdlib_strtox` (`"19"`/2, `"78"`/8, `"08"`/0,
+`"\v\v\v8"`/8).
+
+## F-026 · `SDL_StepBackUTF8` still skips stray continuation bytes after a NUL
+
+**Status:** reproduced, fixed. Found by `cbmc/harness/stepbackutf8.c`; also killed in the Lean
+model.
+
+**Code:** the F-008 fix reports U+FFFD when the bytes walked back over are not one character,
+but only `if (result != 0 && …)`. When the walk back stops on a NUL, `StepUTF8` returns 0, so the
+check is skipped: `00 BF BF` stepping back from the end returns 0 (which reads as "at the
+start") and lands on the NUL, three bytes back, silently skipping two stray bytes. It needs an
+embedded NUL before `*pstr`, so the reach is small; no memory error.
+
+**Why Lean missed it:** `stepBackFix_spec` stated the "exact span" property under the hypothesis
+`(cStepBackFix s p).1 ≠ 0 → …`, which exempts exactly this case. The CBMC harness's spec was
+written independently and has no such exemption. The theorem now covers it: the result is
+U+FFFD one byte back, or exactly one character, or a single NUL byte. A new proof mutant
+(`stepbackfix_f026_nul_skips`) restores the old condition and is caught.
+
+**Fix:** report U+FFFD whenever the bytes are not one character, except for a lone NUL byte,
+which still steps back with result 0. Test: `stdlib_utf8` (`a 00 BF BF` steps back as U+FFFD,
+U+FFFD, 0, `'a'`).
 
 ## R-2 · Gamepad mapping strings: the parser's grammar, buffer bounds and round trip (Lean)
 
