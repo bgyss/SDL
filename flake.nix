@@ -55,6 +55,7 @@
               # Formal verification (verification/)
               pkgs.tlaplus # tlc, tlasany, pcal
               pkgs.elan # Lean toolchain manager; the version is pinned by verification/lean/lean-toolchain
+              pkgs.cbmc # bounded model checking of the C code itself (verification/cbmc)
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux linuxLibs;
           };

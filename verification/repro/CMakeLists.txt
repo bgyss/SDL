@@ -25,6 +25,14 @@ string(FIND "${sysaudio_h}" "SDL_FindAndRefPhysicalAudioDeviceByHandle" find_and
 file(GLOB repro_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/f*.c")
 foreach(src IN LISTS repro_sources)
   get_filename_component(name "${src}" NAME_WE)
+  if(name STREQUAL "f027_strtol_radix")
+    # Compiles SDL_string.c itself with the libc-less minimal config (see the file), so it does
+    # not link SDL. The CBMC config header comes first and selects SDL_build_config_minimal.h.
+    add_executable(${name} "${src}")
+    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../cbmc/include"
+      "${SDL_SOURCE}/include" "${SDL_SOURCE}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
+    continue()
+  endif()
   add_executable(${name} "${src}")
   target_link_libraries(${name} PRIVATE SDL3::SDL3-static)
   if(NOT find_and_ref EQUAL -1)

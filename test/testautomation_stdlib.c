@@ -1,6 +1,7 @@
 /**
  * Standard C library routine test suite
  */
+#include <limits.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_test.h>
 #include "testautomation_suites.h"
@@ -54,6 +55,32 @@ static int SDLCALL stdlib_strlcpy(void *arg)
     SDLTest_AssertPass("Call to SDL_strlcpy(\"foo\") with buffer size 2");
     SDLTest_AssertCheck(SDL_strcmp(text, expected) == 0, "Check text, expected: %s, got: %s", expected, text);
     SDLTest_AssertCheck(result == 3, "Check result value, expected: 3, got: %d", (int)result);
+
+    /* F-028: SDL_strrev on "" must not form a pointer before the string (UBSan checks this). */
+    {
+        char empty[1] = { '\0' };
+        char odd[] = "abc";
+        char even[] = "abcd";
+        SDL_strrev(empty);
+        SDL_strrev(odd);
+        SDL_strrev(even);
+        SDLTest_AssertCheck(empty[0] == '\0', "SDL_strrev(\"\") leaves it empty");
+        SDLTest_AssertCheck(SDL_strcmp(odd, "cba") == 0, "SDL_strrev(\"abc\"), got: %s", odd);
+        SDLTest_AssertCheck(SDL_strcmp(even, "dcba") == 0, "SDL_strrev(\"abcd\"), got: %s", even);
+    }
+
+    /* F-029: SDL_ltoa / SDL_lltoa of the most negative value, without signed overflow. */
+    {
+        char buf[sizeof(long long) * 8 + 2], want[sizeof(buf)];
+        SDL_ltoa(LONG_MIN, buf, 10);
+        SDL_snprintf(want, sizeof(want), "%ld", LONG_MIN);
+        SDLTest_AssertCheck(SDL_strcmp(buf, want) == 0, "SDL_ltoa(LONG_MIN), expected: %s, got: %s", want, buf);
+        SDL_lltoa(LLONG_MIN, buf, 10);
+        SDL_snprintf(want, sizeof(want), "%lld", LLONG_MIN);
+        SDLTest_AssertCheck(SDL_strcmp(buf, want) == 0, "SDL_lltoa(LLONG_MIN), expected: %s, got: %s", want, buf);
+        SDL_ltoa(-5, buf, 2);
+        SDLTest_AssertCheck(SDL_strcmp(buf, "-101") == 0, "SDL_ltoa(-5, 2), got: %s", buf);
+    }
 
     return TEST_COMPLETED;
 }
@@ -1410,6 +1437,13 @@ static int SDLCALL stdlib_strtox(void *arg)
     STRTOX_TEST_CASE(SDL_strtoull, unsigned long long, FMT_PRILLu, "-0", 10, 0, 2);
     STRTOX_TEST_CASE(SDL_strtoull, unsigned long long, FMT_PRILLu, " - 1", 0, 0, 0); // invalid input
 
+    // F-027: only digits of the base are parsed, and an inferred octal number starts with its '0'.
+    // (These exercise SDL's own scanner only in builds without a C library; elsewhere libc's.)
+    STRTOX_TEST_CASE(SDL_strtoull, unsigned long long, FMT_PRILLu, "19", 2, 1, 1);
+    STRTOX_TEST_CASE(SDL_strtoull, unsigned long long, FMT_PRILLu, "78", 8, 7, 1);
+    STRTOX_TEST_CASE(SDL_strtoull, unsigned long long, FMT_PRILLu, "08", 0, 0, 1);
+    STRTOX_TEST_CASE(SDL_strtol, long, "%ld", "\v\v\v8", 8, 0, 0);
+
     // We know that SDL_strtol, SDL_strtoul and SDL_strtoll share the same code path as SDL_strtoull under the hood,
     // so the most interesting test cases are those close to the bounds of the integer type.
 
@@ -1544,13 +1578,27 @@ static int SDLCALL stdlib_utf8(void *arg)
         }
         SDLTest_AssertCheck(p == text && SDL_StepBackUTF8(text, &p) == 0, "StepBack ends at the start");
     }
+
+    /* F-026: stray trailing bytes after a NUL are reported too; a lone NUL still steps back as 0. */
+    {
+        static const char s[] = { 'a', '\0', '\xBF', '\xBF' };
+        const char *p = s + sizeof(s);
+        Uint32 cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == SDL_INVALID_UNICODE_CODEPOINT && p == s + 3, "StepBack over 00 BF BF: got U+%X at %d", (unsigned)cp, (int)(p - s));
+        cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == SDL_INVALID_UNICODE_CODEPOINT && p == s + 2, "StepBack over 00 BF: got U+%X at %d", (unsigned)cp, (int)(p - s));
+        cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == 0 && p == s + 1, "StepBack over the NUL: got U+%X at %d", (unsigned)cp, (int)(p - s));
+        cp = SDL_StepBackUTF8(s, &p);
+        SDLTest_AssertCheck(cp == 'a' && p == s, "StepBack then finds 'a': got U+%X at %d", (unsigned)cp, (int)(p - s));
+    }
     return TEST_COMPLETED;
 }
 
 /* ================= Test References ================== */
 
 static const SDLTest_TestCaseReference stdlibTest_utf8 = {
-    stdlib_utf8, "stdlib_utf8", "UTF-8 stepping and copying (F-004, F-005, F-007, F-008)", TEST_ENABLED
+    stdlib_utf8, "stdlib_utf8", "UTF-8 stepping and copying (F-004, F-005, F-007, F-008, F-026)", TEST_ENABLED
 };
 
 /* Standard C routine test cases */

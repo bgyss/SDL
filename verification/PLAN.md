@@ -74,11 +74,13 @@ verification/
   lean/                lake project: lean-toolchain, lakefile.toml, SDLVerif/…, test/
   harness/             libFuzzer targets + differential shims linking libSDL3
   instrument/          VERIF_TRACE macros (compiled out unless SDL_VERIF_TRACE)
+  cbmc/                CBMC harnesses on the C itself: run.sh, EXPECT, MUTANTS, harness/
 ```
 
-The tools come from the repo `flake.nix`: `tlaplus` 1.7.4 for `tlc`, and `elan` for Lean. Lean
-itself is pinned by `verification/lean/lean-toolchain`, because elan honours that file. The
-`mise run tla` task model-checks every spec. `mise run lean` runs `lake build`.
+The tools come from the repo `flake.nix`: `tlaplus` 1.7.4 for `tlc`, `elan` for Lean, and
+`cbmc` for bounded model checking. Lean itself is pinned by `verification/lean/lean-toolchain`,
+because elan honours that file. The `mise run tla` task model-checks every spec. `mise run lean`
+runs `lake build`. `mise run cbmc` runs the CBMC harnesses.
 
 ## Phases
 
@@ -269,6 +271,27 @@ differential test found F-025, now fixed. Phase 5 is complete.
 - [x] BMP and WAV header arithmetic (`Header.lean`; found F-023, F-024): prove that the size and offset computations
   cannot overflow or exceed the stream length, for the field ranges the C code accepts.
 - [ ] Extend the shared bit-vector and arithmetic lemmas in `SDLVerif/Common/` as they come up.
+
+### CBMC pilot: bounded model checking of `src/stdlib/` (2026-11-06)
+
+A route to the C code itself that needs no transcription: CBMC compiles the real sources and
+checks every input within stated bounds for memory errors, undefined behaviour and functional
+assertions (`verification/cbmc/README.md`). It complements Phase 6 rather than replacing it,
+because its results are bounded and Clift's would not be.
+
+- [x] Tooling: `cbmc` in the flake; `mise run cbmc` checks each harness on the current tree and
+  on the base tree `cb6224d2e`, and checks the seeded mutants in `cbmc/MUTANTS`, all against
+  `cbmc/EXPECT`.
+- [x] Harnesses for `SDL_strlcpy`, `SDL_strlcat`, `SDL_StepUTF8` (with and without a length),
+  `SDL_StepBackUTF8`, `SDL_utf8strlcpy`, `SDL_strcasecmp`/`strncasecmp`, `SDL_strtol`,
+  `SDL_ltoa`, `SDL_strrev`, and the CRC16/CRC32/murmur3 hashes, with 11 mutants. The UTF-8
+  harnesses compare against an independent decoder written from Unicode Table 3-7.
+- [x] Would CBMC have found the known bugs? On the base tree it finds F-004 (the over-read, in
+  both `StepUTF8(NULL)` and `strcasecmp`), F-005, F-007 and F-008.
+- [x] New findings F-026 – F-029, all reproduced and fixed (FINDINGS.md, "CBMC pilot").
+- [ ] `SDL_strtok_r`: the harness is written but CBMC exhausts memory on it (cbmc/README, "Open").
+- [ ] Go/no-go for widening the pilot (candidates: `SDL_vsnprintf`'s integer and string
+  formatting, `SDL_iconv`, `SDL_qsort`, the WAV/BMP header readers with stubbed I/O).
 
 ### Phase 6 (optional, time-boxed): routes to the C code itself
 

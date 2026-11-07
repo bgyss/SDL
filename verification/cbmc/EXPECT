@@ -1,0 +1,22 @@
+# What each harness must show on the pre-fix tree ("base", cb6224d2e) and on the current tree
+# ("fixed"). run.sh fails if any outcome differs.
+#
+#   harness   base-expectation   fixed-expectation
+#
+# Expectations: "pass" (VERIFICATION SUCCESSFUL), or "fail:<regex>", where the regex must match
+# one of the property lines CBMC reports as FAILURE. Mutant expectations are the
+# fourth column of MUTANTS.
+strlcpy        pass    pass
+strlcat        pass    pass
+steputf8_len   fail:ill-formed.input.gives.U\+FFFD       pass
+steputf8_null  fail:StepUTF8\..*outside.object.bounds   pass
+stepbackutf8   fail:steps.over.exactly.one.character    pass
+utf8strlcpy    fail:valid.input.gives.valid.output      pass
+strcasecmp     fail:StepUTF8\..*outside.object.bounds   pass
+strtol         fail:strtol:.value                       pass
+ltoa           fail:unary.minus.in.-value    pass
+strrev         fail:SDL_strrev.*pointer.outside.object.bounds   pass
+# strtok_r: not run. CBMC 6.11 grows past 10 GB within seconds of starting the SAT stage on
+# harness/strtok_r.c, even at --unwind 3, and the run is killed (README, "Open").
+# strtok_r       pass    pass
+hashes         pass    pass

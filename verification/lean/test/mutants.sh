@@ -25,7 +25,8 @@ mutants=(
   "walkback_one_step|Utf8String|s/  \| q \+ 1 => if isCont \(byteAt s q\) then walkBack s q else q/  | q + 1 => if isCont (byteAt s q) then q else q/"
   "scanC_checks_index0|Utf8String|0,/  \| 0 => b$/s//  | 0 => if trailingBytes (byteAt s 0) ≠ 0 then (if b ≠ trailingBytes (byteAt s 0) + 1 then 0 else b) else b/"
   # Utf8Fixed.lean: the fork's fixed SDL_StepBackUTF8
-  "stepbackfix_no_span_check|Utf8Fixed|s/if r.cp ≠ 0 ∧ r.adv.toNat ≠ p - q then/if False then/"
+  "stepbackfix_no_span_check|Utf8Fixed|s/if r.adv.toNat ≠ p - q ∧ \(r.cp ≠ 0 ∨ p - q ≠ 1\) then/if False then/"
+  "stepbackfix_f026_nul_skips|Utf8Fixed|s/if r.adv.toNat ≠ p - q ∧ \(r.cp ≠ 0 ∨ p - q ≠ 1\) then/if r.adv.toNat ≠ p - q ∧ r.cp ≠ 0 then/"
   "scanFix_keeps_partial|Utf8String|s/      \(if b ≠ trailingBytes \(byteAt s 0\) \+ 1 then 0 else b\)/      (if b ≠ trailingBytes (byteAt s 0) + 1 then b else b)/"
   # Rect.lean: the integer rect functions and the F-012/F-015 fixes
   "guard_no_negative_bound|Rect|s/\(fixed \&\& \(r.w.sle HALF_MIN \|\| r.h.sle HALF_MIN\)\)/(fixed \&\& false)/"

@@ -5,7 +5,7 @@ The fork's fixed UTF-8 code (bgyss/SDL, 2026-11-05), as it now is in src/stdlib/
 * `StepUTF8` is `cFixed` (Utf8.lean): each trailing byte is read only after the previous one
   checked out, and 4-byte results stop at U+10FFFF (F-004, F-005).
 * `SDL_utf8strlcpy` is `fixLcpy` (Utf8String.lean): the backward scan includes index 0 (F-007).
-* `SDL_StepBackUTF8` is `cStepBackFix` below (F-008).
+* `SDL_StepBackUTF8` is `cStepBackFix` below (F-008, F-026).
 
 The pre-fix models (`cStep`, `cLcpy`, `cStepBack`) stay as the record of the findings; the
 differential tests (test/utf8_diff.sh, test/utf8_corpus.sh) now run against these.
@@ -16,20 +16,23 @@ namespace SDLVerif.Utf8
 def stepAtF (s : Bytes) (i slen : Nat) : Res :=
   cFixed (byteAt s i) (byteAt s (i + 1)) (byteAt s (i + 2)) (byteAt s (i + 3)) (BitVec.ofNat 64 slen)
 
-/-- The fixed `SDL_StepBackUTF8`:
+/-- The fixed `SDL_StepBackUTF8` (F-008, and F-026 for a walk back that stops on a NUL):
 ```c
 const char *decoded = str;
 const Uint32 result = StepUTF8(&decoded, length);
-if (result != 0 && (size_t)(decoded - str) != length) { *pstr -= 1; return SDL_INVALID_UNICODE_CODEPOINT; }
+if ((size_t)(decoded - str) != length && (result != 0 || length != 1)) { *pstr -= 1; return SDL_INVALID_UNICODE_CODEPOINT; }
 *pstr = str;
 return result;
-``` -/
+```
+The F-008 fix tested `result != 0 && ...`, so a NUL followed by stray continuation bytes still
+stepped back over all of them and returned 0. The CBMC harness `verification/cbmc/harness/
+stepbackutf8.c` found it; `stepBackFix_spec` below used to exempt result 0 and so did not. -/
 def cStepBackFix (s : Bytes) (p : Nat) : CP × Nat :=
   if p = 0 then (0, 0)
   else
     let q := walkBack s p
     let r := stepAtF s q (p - q)
-    if r.cp ≠ 0 ∧ r.adv.toNat ≠ p - q then (invalid, p - 1) else (r.cp, q)
+    if r.adv.toNat ≠ p - q ∧ (r.cp ≠ 0 ∨ p - q ≠ 1) then (invalid, p - 1) else (r.cp, q)
 
 /-- The fixed `StepUTF8` agrees with the old one wherever the old one returned an in-range
 code point (from the patch audit `fix_changes_only_out_of_range`). -/
@@ -54,15 +57,15 @@ theorem stepF_enc (pre post : Bytes) (c : CP) (slen : Nat) (hc : scalar c = true
   exact ⟨by simpa [stepAtF, stepAt] using e1.trans h1, by
     have := congrArg BitVec.toNat e2; simp only [stepAtF, stepAt] at this ⊢; rw [this]; exact h2⟩
 
-/-- **F-008 fixed: no silent skips.** Every call either reports exactly one invalid byte
-(U+FFFD, moving back one byte), or returns a character whose encoding is *exactly* the bytes it
-stepped back over. -/
+/-- **F-008 and F-026 fixed: no silent skips.** Every call either reports exactly one invalid
+byte (U+FFFD, moving back one byte), or returns a character whose encoding is *exactly* the bytes
+it stepped back over, or steps back over a single NUL byte and returns 0. -/
 theorem stepBackFix_spec (s : Bytes) (p : Nat) (hp : 0 < p) :
     (cStepBackFix s p = (invalid, p - 1)) ∨
     ((cStepBackFix s p).2 = walkBack s p ∧
      (cStepBackFix s p).1 = (stepAtF s (walkBack s p) (p - walkBack s p)).cp ∧
-     ((cStepBackFix s p).1 ≠ 0 →
-       (stepAtF s (walkBack s p) (p - walkBack s p)).adv.toNat = p - walkBack s p)) := by
+     ((stepAtF s (walkBack s p) (p - walkBack s p)).adv.toNat = p - walkBack s p ∨
+      ((stepAtF s (walkBack s p) (p - walkBack s p)).cp = 0 ∧ p - walkBack s p = 1))) := by
   unfold cStepBackFix
   rw [if_neg (by omega)]
   simp only
@@ -70,8 +73,12 @@ theorem stepBackFix_spec (s : Bytes) (p : Nat) (hp : 0 < p) :
   · left; rfl
   · rename_i h
     right
-    refine ⟨rfl, rfl, fun hne => ?_⟩
-    exact Classical.byContradiction fun hadv => h ⟨by simpa using hne, hadv⟩
+    refine ⟨rfl, rfl, ?_⟩
+    by_cases hadv : (stepAtF s (walkBack s p) (p - walkBack s p)).adv.toNat = p - walkBack s p
+    · exact Or.inl hadv
+    · refine Or.inr ⟨?_, ?_⟩
+      · exact Classical.byContradiction fun hc => h ⟨hadv, Or.inl hc⟩
+      · exact Classical.byContradiction fun h1 => h ⟨hadv, Or.inr h1⟩
 
 /-- **F-008 fixed, soundness against RFC 3629.** A non-zero, non-U+FFFD result is one
 well-formed character that spans every byte stepped back over. -/
@@ -82,11 +89,11 @@ theorem stepBackFix_sound (s : Bytes) (p : Nat) (hp : 0 < p) (h64 : p < 2 ^ 64)
     decodeVal (wfLen (byteAt s q) (byteAt s (q + 1)) (byteAt s (q + 2)) (byteAt s (q + 3)))
       (byteAt s q) (byteAt s (q + 1)) (byteAt s (q + 2)) (byteAt s (q + 3)) = (cStepBackFix s p).1 := by
   intro q
-  rcases stepBackFix_spec s p hp with h | ⟨hq, hcp, hadv⟩
+  rcases stepBackFix_spec s p hp with h | ⟨hq, hcp, hadv | ⟨hc0, _⟩⟩
   · exact absurd (by rw [h]) hi
   · have hq' : q = walkBack s p := hq
     have hcp' := hcp; rw [← hq'] at hcp'
-    have hadv' := hadv h0; rw [← hq'] at hadv'
+    have hadv' := hadv; rw [← hq'] at hadv'
     have e0 : (stepAtF s q (p - q)).cp ≠ 0 := by rw [← hcp']; exact h0
     have ei : (stepAtF s q (p - q)).cp ≠ invalid := by rw [← hcp']; exact hi
     have hs := fixed_sound (byteAt s q) (byteAt s (q + 1)) (byteAt s (q + 2)) (byteAt s (q + 3))
@@ -94,6 +101,7 @@ theorem stepBackFix_sound (s : Bytes) (p : Nat) (hp : 0 < p) (h64 : p < 2 ^ 64)
     refine ⟨?_, ?_⟩
     · rw [hs.1]; simpa only [stepAtF] using hadv'
     · rw [hs.2]; simpa only [stepAtF] using hcp'.symm
+  · exact absurd (hcp.trans hc0) h0
 
 /-- The fixed `StepBack` still inverts `Step` on every well-formed character. -/
 theorem stepBackFix_enc (pre post : Bytes) (c : CP) (hc : scalar c = true) :
@@ -103,6 +111,6 @@ theorem stepBackFix_enc (pre post : Bytes) (c : CP) (hc : scalar c = true) :
   have hc0 : c ≠ 0 := by intro h; simp [scalar, h] at hc
   unfold cStepBackFix
   rw [if_neg (by omega), walkBack_enc]
-  simp only [Nat.add_sub_cancel_left, h1, h2, ne_eq, not_true_eq_false, and_false, ↓reduceIte]
+  simp only [Nat.add_sub_cancel_left, h1, h2, ne_eq, not_true_eq_false, false_and, ↓reduceIte]
 
 end SDLVerif.Utf8
